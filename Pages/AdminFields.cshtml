@@ -1,13 +1,14 @@
 @page
-@model LibRecord.Pages.AdminModel
+@model LibRecord.Pages.AdminFieldsModel
 @{
-  ViewData["Title"] = "Admin";
+  ViewData["Title"] = "Admin fields";
+  ViewData["AdminNav"] = "fields";
 }
 
 <section class="panel">
   <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px;">
     <div>
-      <h1 class="h1">Admin</h1>
+      <h1 class="h1">Admin · Custom fields</h1>
       <p class="muted">Localhost-only. Password is in <code>appsettings.json</code>.</p>
     </div>
     @if (Model.IsAdmin)
@@ -43,8 +44,131 @@
 {
   <div class="divider"></div>
 
-  <div class="row row--2">
+  <div class="admin-shell">
+    <aside class="panel" style="padding: 12px;">
+      <div style="font-weight:700; margin-bottom: 10px;">Admin</div>
+      <partial name="Shared/_AdminSidebar" />
+    </aside>
+
     <section class="panel">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <h2 class="h1" style="margin:0;">Fields</h2>
+          <div class="muted" style="margin-top:6px;">Create, edit, delete fields. Import/export lives here.</div>
+        </div>
+        <div class="actions">
+          <form method="post" asp-page-handler="Export">
+            <button class="btn" type="submit">Export</button>
+          </form>
+          <button class="btn" type="button" data-open-dialog="importDialog">Import</button>
+        </div>
+      </div>
+
+      <dialog id="importDialog" class="dialog">
+        <div class="dialog__panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="font-weight:700;">Import from Excel</div>
+            <button class="btn" type="button" data-close-dialog>Close</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <form method="post" asp-page-handler="ImportPreview" enctype="multipart/form-data" class="grid">
+            <div class="field">
+              <label>Select .xlsx file</label>
+              <input type="file" name="file" accept=".xlsx" />
+              <div class="muted" style="font-size: 12px;">
+                Column 1 maps to field 1 (e.g. Title), column 2 maps to field 2 (e.g. Author), and so on.
+              </div>
+            </div>
+            <div class="actions">
+              <button class="btn btn--primary" type="submit">Preview import</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+
+      <dialog id="importResultDialog" class="dialog">
+        <div class="dialog__panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="font-weight:700;">Import check</div>
+            <button class="btn" type="button" data-close-dialog>Close</button>
+          </div>
+
+          <div class="divider"></div>
+
+          @if (!string.IsNullOrWhiteSpace(Model.Error))
+          {
+            <div class="panel" style="border-color: rgba(255,107,107,0.35); background: rgba(255,107,107,0.08);">
+              <strong>Error:</strong> @Model.Error
+            </div>
+            <div class="divider"></div>
+          }
+
+          @if (Model.ImportPreview is not null)
+          {
+            <div class="muted" style="font-size: 13px;">Rows detected: <strong>@Model.ImportPreview.TotalRows</strong></div>
+
+            @if (Model.ImportPreview.RequiredMissing.Count > 0)
+            {
+              <div class="divider"></div>
+              <div class="panel" style="border-color: rgba(255,107,107,0.35); background: rgba(255,107,107,0.08);">
+                <strong>Required field missing.</strong>
+                <div class="muted" style="margin-top:6px; font-size: 13px;">
+                  @foreach (var kv in Model.ImportPreview.RequiredMissing)
+                  {
+                    <div>
+                      <strong>@kv.Key</strong>: missing on rows @string.Join(", ", kv.Value.Take(20))@((kv.Value.Count > 20) ? "…" : "")
+                    </div>
+                  }
+                </div>
+                <div class="muted" style="margin-top:8px; font-size: 12px;">
+                  Fix the Excel file or mark the field as not required, then import again.
+                </div>
+              </div>
+            }
+            else if (Model.ImportPreview.OptionalMissing.Count > 0)
+            {
+              <div class="divider"></div>
+              <div class="panel">
+                <strong>Some data is missing.</strong>
+                <div class="muted" style="margin-top:6px; font-size: 13px;">
+                  @foreach (var kv in Model.ImportPreview.OptionalMissing)
+                  {
+                    <div>
+                      <strong>@kv.Key</strong>: empty on rows @string.Join(", ", kv.Value.Take(20))@((kv.Value.Count > 20) ? "…" : "")
+                    </div>
+                  }
+                </div>
+                <div class="divider"></div>
+                <form method="post" asp-page-handler="ImportCommit" class="actions">
+                  <input type="hidden" name="previewId" value="@Model.ImportPreview.PreviewId" />
+                  <input type="hidden" name="force" value="true" />
+                  <button class="btn btn--primary" type="submit">Yes, proceed</button>
+                  <button class="btn" type="button" data-close-dialog>No, cancel</button>
+                </form>
+              </div>
+            }
+            else
+            {
+              <div class="divider"></div>
+              <div class="panel">
+                <strong>All good.</strong> No missing required fields detected.
+                <div class="divider"></div>
+                <form method="post" asp-page-handler="ImportCommit" class="actions">
+                  <input type="hidden" name="previewId" value="@Model.ImportPreview.PreviewId" />
+                  <input type="hidden" name="force" value="true" />
+                  <button class="btn btn--primary" type="submit">Import now</button>
+                  <button class="btn" type="button" data-close-dialog>Cancel</button>
+                </form>
+              </div>
+            }
+          }
+        </div>
+      </dialog>
+
+      <div class="divider"></div>
+
       <h2 class="h1">Custom fields</h2>
       <p class="muted">Create up to your configured max (default 6). Mark which fields are searchable.</p>
 
@@ -172,175 +296,16 @@
         </tbody>
       </table>
     </section>
-
-    <section class="panel">
-      <h2 class="h1">@((Model.EditBookId is null) ? "Add book" : $"Edit book #{Model.EditBookId}")</h2>
-      <p class="muted">This form is generated from your current custom fields.</p>
-
-      <form method="post" asp-page-handler="SaveBook" class="grid" style="margin-top: 12px;">
-        <input type="hidden" name="id" value="@(Model.EditBookId ?? 0)" />
-
-        @{
-          var activeFields = Model.Fields.Where(f => !f.IsDeleted).OrderBy(f => f.SortOrder).ToList();
-        }
-
-        @foreach (var f in activeFields)
-        {
-          var inputName = $"Value_{f.Id}";
-          Model.EditFieldValues.TryGetValue(f.Id, out var cur);
-          cur ??= "";
-          <div class="field">
-            <label>@f.Name @if (f.IsRequired) { <span class="pill">required</span> } @if (f.IsSearchable) { <span class="pill">search</span> } @if (f.IsKeywords) { <span class="pill" title="Comma-separated values are split for keyword search">Kw</span> }</label>
-            @switch (f.Type)
-            {
-              case FieldType.Text:
-                @if (f.IsKeywords)
-                {
-                  <textarea name="@inputName" rows="3" placeholder="Comma-separated, e.g. Development, Software, Management, Database">@cur</textarea>
-                }
-                else
-                {
-                  <input type="text" name="@inputName" value="@cur" />
-                }
-                break;
-              case FieldType.Number:
-                <input type="number" step="any" name="@inputName" value="@cur" />
-                break;
-              case FieldType.Boolean:
-                <label class="pill" style="width: fit-content;">
-                  <input type="checkbox" name="@inputName" value="true" checked="@(cur == "true" ? "checked" : null)" /> True
-                </label>
-                break;
-              case FieldType.Date:
-                <input type="date" name="@inputName" value="@cur" />
-                break;
-            }
-          </div>
-        }
-
-        <div class="actions">
-          <button class="btn btn--primary" type="submit">Save</button>
-          <a class="btn" asp-page="/Admin">Reset</a>
-        </div>
-      </form>
-    </section>
   </div>
+}
 
-  <div class="divider"></div>
-
-  <section class="panel">
-    <h2 class="h1">Books (@Model.Books.Count)</h2>
-    <form method="get" class="grid" style="margin-top: 12px;">
-      <div class="actions">
-        <button class="btn" type="button" data-open-dialog="adminFiltersDialog">Filters & sort</button>
-        <button class="btn btn--primary" type="submit">Apply</button>
-        <a class="btn" asp-page="/Admin">Clear</a>
-      </div>
-
-      <dialog id="adminFiltersDialog" class="dialog">
-        <div class="dialog__panel">
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-            <div style="font-weight:700;">Filters & sort</div>
-            <button class="btn" type="button" data-close-dialog>Close</button>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="row row--2" style="gap: 12px;">
-            <div class="field">
-              <label>Uploaded from</label>
-              <input type="date" name="UploadedFrom" value="@(Model.UploadedFrom?.ToString("yyyy-MM-dd"))" />
-            </div>
-            <div class="field">
-              <label>Uploaded to</label>
-              <input type="date" name="UploadedTo" value="@(Model.UploadedTo?.ToString("yyyy-MM-dd"))" />
-            </div>
-          </div>
-
-          <div class="divider"></div>
-
-          <div class="field">
-            <label>Sort (single choice)</label>
-            <div class="grid" style="grid-template-columns: 1fr; gap: 8px;">
-              <label class="pill"><input type="radio" name="Sort" value="" checked="@(string.IsNullOrWhiteSpace(Model.Sort) ? "checked" : null)" /> Uploaded (newest)</label>
-              <label class="pill"><input type="radio" name="Sort" value="uploaded_old" checked="@(Model.Sort == "uploaded_old" ? "checked" : null)" /> Uploaded (oldest)</label>
-              <label class="pill"><input type="radio" name="Sort" value="title_az" checked="@(Model.Sort == "title_az" ? "checked" : null)" /> Title (A-Z)</label>
-              <label class="pill"><input type="radio" name="Sort" value="title_za" checked="@(Model.Sort == "title_za" ? "checked" : null)" /> Title (Z-A)</label>
-            </div>
-          </div>
-
-          @foreach (var ff in Model.FilterFields)
-          {
-            var key = $"f_{ff.Field.Id}";
-            Model.ActiveFilters.TryGetValue(ff.Field.Id, out var selectedSet);
-
-            <div class="divider"></div>
-            <div class="field">
-              <label>@ff.Field.Name (multi-select)</label>
-              <div class="actions">
-                @foreach (var opt in ff.Options)
-                {
-                  var isChecked = selectedSet is not null && selectedSet.Contains(opt);
-                  <label class="pill">
-                    <input type="checkbox" name="@key" value="@opt" checked="@(isChecked ? "checked" : null)" />
-                    @opt
-                  </label>
-                }
-              </div>
-            </div>
-          }
-
-          <div class="divider"></div>
-
-          <div class="actions">
-            <button class="btn btn--primary" type="submit" data-close-dialog>Apply</button>
-            <a class="btn" asp-page="/Admin">Clear</a>
-          </div>
-        </div>
-      </dialog>
-    </form>
-
-    @if (Model.Books.Count == 0)
-    {
-      <p class="muted">No books yet.</p>
-    }
-    else
-    {
-      <table class="table">
-        <thead>
-          <tr>
-            <th style="width:60px;">ID</th>
-            <th>Title</th>
-            <th>Values</th>
-            <th style="width:140px;">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          @foreach (var b in Model.Books)
-          {
-            <tr>
-              <td><span class="pill">@b.Id</span></td>
-              <td style="font-weight:700;">@b.Title</td>
-              <td class="muted">
-                @foreach (var v in b.Values.Take(6))
-                {
-                  <div><span class="muted">@v.Name</span>: @v.Value</div>
-                }
-              </td>
-              <td>
-                <div class="actions">
-                  <a class="btn" asp-page="/Admin" asp-route-EditBookId="@b.Id">Edit</a>
-                  <form method="post" asp-page-handler="DeleteBook">
-                    <input type="hidden" name="id" value="@b.Id" />
-                    <button class="btn btn--danger" type="submit">Delete</button>
-                  </form>
-                </div>
-              </td>
-            </tr>
-          }
-        </tbody>
-      </table>
-    }
-  </section>
+@if (Model.OpenImportResultDialog)
+{
+  <script>
+    (function () {
+      const d = document.getElementById('importResultDialog');
+      if (d && typeof d.showModal === 'function') d.showModal();
+    })();
+  </script>
 }
 

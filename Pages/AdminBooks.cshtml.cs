@@ -9,12 +9,12 @@ using System.Globalization;
 
 namespace LibRecord.Pages;
 
-public sealed class AdminModel : PageModel
+public sealed class AdminBooksModel : PageModel
 {
   private readonly AppDbContext _db;
   private readonly AdminOptions _options;
 
-  public AdminModel(AppDbContext db, IOptions<AdminOptions> options)
+  public AdminBooksModel(AppDbContext db, IOptions<AdminOptions> options)
   {
     _db = db;
     _options = options.Value;
@@ -29,13 +29,6 @@ public sealed class AdminModel : PageModel
 
   [BindProperty] public string Password { get; set; } = "";
 
-  [BindProperty] public string NewFieldName { get; set; } = "";
-  [BindProperty] public FieldType NewFieldType { get; set; } = FieldType.Text;
-  [BindProperty] public bool NewFieldRequired { get; set; }
-  [BindProperty] public bool NewFieldSearchable { get; set; } = true;
-  [BindProperty] public bool NewFieldFilterable { get; set; }
-  [BindProperty] public bool NewFieldKeywords { get; set; }
-
   [BindProperty(SupportsGet = true)] public int? EditBookId { get; set; }
 
   /// <summary>Current values when adding/editing a book (key = field id).</summary>
@@ -48,7 +41,6 @@ public sealed class AdminModel : PageModel
   public Dictionary<int, HashSet<string>> ActiveFilters { get; private set; } = [];
   public List<FilterField> FilterFields { get; private set; } = [];
 
-  // Dynamic values posted as Value_{FieldId}
   public async Task OnGetAsync()
   {
     await LoadAsync();
@@ -64,164 +56,29 @@ public sealed class AdminModel : PageModel
     }
 
     AdminAuth.SignIn(Response, _options);
-    return RedirectToPage("/Admin");
+    return RedirectToPage("/AdminBooks");
   }
 
   public IActionResult OnPostLogout()
   {
     AdminAuth.SignOut(Response, _options);
-    return RedirectToPage("/Admin");
-  }
-
-  public async Task<IActionResult> OnPostAddFieldAsync()
-  {
-    if (!IsAdmin) return RedirectToPage("/Admin");
-
-    var name = (NewFieldName ?? "").Trim();
-    if (string.IsNullOrWhiteSpace(name))
-    {
-      Error = "Field name is required.";
-      await LoadAsync();
-      return Page();
-    }
-
-    var activeCount = await _db.FieldDefinitions.CountAsync(x => !x.IsDeleted);
-    if (activeCount >= _options.MaxCustomFields)
-    {
-      Error = $"Max fields reached ({_options.MaxCustomFields}).";
-      await LoadAsync();
-      return Page();
-    }
-
-    var exists = await _db.FieldDefinitions.AnyAsync(x => !x.IsDeleted && x.Name.ToLower() == name.ToLower());
-    if (exists)
-    {
-      Error = "Field name already exists.";
-      await LoadAsync();
-      return Page();
-    }
-
-    var maxSort = await _db.FieldDefinitions.Where(x => !x.IsDeleted).Select(x => (int?)x.SortOrder).MaxAsync() ?? 0;
-    _db.FieldDefinitions.Add(new FieldDefinition
-    {
-      Name = name,
-      Type = NewFieldType,
-      IsRequired = NewFieldRequired,
-      IsSearchable = NewFieldSearchable,
-      IsFilterable = NewFieldFilterable,
-      IsKeywords = NewFieldKeywords && NewFieldType == FieldType.Text,
-      SortOrder = maxSort + 1,
-      IsDeleted = false,
-    });
-    await _db.SaveChangesAsync();
-    return RedirectToPage("/Admin");
-  }
-
-  public async Task<IActionResult> OnPostToggleFieldAsync(int id, string prop)
-  {
-    if (!IsAdmin) return RedirectToPage("/Admin");
-    var field = await _db.FieldDefinitions.FirstOrDefaultAsync(x => x.Id == id);
-    if (field is null) return RedirectToPage("/Admin");
-
-    switch (prop)
-    {
-      case "required":
-        field.IsRequired = !field.IsRequired;
-        break;
-      case "searchable":
-        field.IsSearchable = !field.IsSearchable;
-        break;
-      case "filterable":
-        if (field.Type != FieldType.Text && field.Type != FieldType.Boolean)
-        {
-          Error = "Only Text/Boolean fields can be used as filters.";
-          await LoadAsync();
-          return Page();
-        }
-        field.IsFilterable = !field.IsFilterable;
-        break;
-      case "keywords":
-        if (field.Type != FieldType.Text)
-        {
-          Error = "Keywords mode is only for Text fields.";
-          await LoadAsync();
-          return Page();
-        }
-        field.IsKeywords = !field.IsKeywords;
-        break;
-      case "delete":
-        field.IsDeleted = true;
-        break;
-      case "restore":
-        field.IsDeleted = false;
-        break;
-    }
-
-    await _db.SaveChangesAsync();
-    return RedirectToPage("/Admin");
-  }
-
-  public async Task<IActionResult> OnPostMoveFieldAsync(int id, string dir)
-  {
-    if (!IsAdmin) return RedirectToPage("/Admin");
-
-    var fields = await _db.FieldDefinitions.Where(x => !x.IsDeleted).OrderBy(x => x.SortOrder).ToListAsync();
-    var idx = fields.FindIndex(f => f.Id == id);
-    if (idx < 0) return RedirectToPage("/Admin");
-
-    var swapWith = dir == "up" ? idx - 1 : idx + 1;
-    if (swapWith < 0 || swapWith >= fields.Count) return RedirectToPage("/Admin");
-
-    (fields[idx].SortOrder, fields[swapWith].SortOrder) = (fields[swapWith].SortOrder, fields[idx].SortOrder);
-    await _db.SaveChangesAsync();
-    return RedirectToPage("/Admin");
-  }
-
-  public async Task<IActionResult> OnPostRenameFieldAsync(int id, string name)
-  {
-    if (!IsAdmin) return RedirectToPage("/Admin");
-
-    var field = await _db.FieldDefinitions.FirstOrDefaultAsync(x => x.Id == id);
-    if (field is null) return RedirectToPage("/Admin");
-
-    var newName = (name ?? "").Trim();
-    if (string.IsNullOrWhiteSpace(newName))
-    {
-      Error = "Field name is required.";
-      await LoadAsync();
-      return Page();
-    }
-
-    var exists = await _db.FieldDefinitions.AnyAsync(x =>
-      x.Id != id &&
-      !x.IsDeleted &&
-      x.Name.ToLower() == newName.ToLower());
-    if (exists)
-    {
-      Error = "Field name already exists.";
-      await LoadAsync();
-      return Page();
-    }
-
-    field.Name = newName;
-    await _db.SaveChangesAsync();
-    return RedirectToPage("/Admin");
+    return RedirectToPage("/AdminBooks");
   }
 
   public async Task<IActionResult> OnPostDeleteBookAsync(int id)
   {
-    if (!IsAdmin) return RedirectToPage("/Admin");
+    if (!IsAdmin) return RedirectToPage("/AdminBooks");
     var book = await _db.Books.FirstOrDefaultAsync(b => b.Id == id);
-    if (book is null) return RedirectToPage("/Admin");
+    if (book is null) return RedirectToPage("/AdminBooks");
 
     _db.Books.Remove(book);
     await _db.SaveChangesAsync();
-    return RedirectToPage("/Admin");
+    return RedirectToPage("/AdminBooks");
   }
 
   public async Task<IActionResult> OnPostSaveBookAsync(int? id)
   {
-    if (!IsAdmin) return RedirectToPage("/Admin");
+    if (!IsAdmin) return RedirectToPage("/AdminBooks");
 
     var fields = await _db.FieldDefinitions.Where(x => !x.IsDeleted).OrderBy(x => x.SortOrder).ToListAsync();
     if (fields.Count == 0)
@@ -322,25 +179,24 @@ public sealed class AdminModel : PageModel
     }
 
     await _db.SaveChangesAsync();
-    return RedirectToPage("/Admin");
+    return RedirectToPage("/AdminBooks");
   }
+
 
   private static string NormalizeTitleCaseIfSafe(FieldDefinition field, string raw)
   {
     raw = (raw ?? "").Trim();
     if (raw.Length == 0) return "";
 
-    // Avoid breaking IDs/codes like "12aQ11" or anything with symbols.
     if (raw.Any(char.IsDigit)) return raw;
     if (raw.Any(c => !(char.IsLetter(c) || char.IsWhiteSpace(c) || c == '\'' || c == '-'))) return raw;
-
-    // "Number" is commonly a Text field in this app; don't title-case it.
     if (string.Equals(field.Name, "Number", StringComparison.OrdinalIgnoreCase)) return raw;
 
     var ti = CultureInfo.CurrentCulture.TextInfo;
     var lowered = raw.ToLower(CultureInfo.CurrentCulture);
     return ti.ToTitleCase(lowered);
   }
+
 
   private void LoadEditFieldsFromForm(List<FieldDefinition> fields, int bookId)
   {

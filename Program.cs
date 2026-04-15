@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorPages();
+builder.Services.AddMemoryCache();
 
 builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
 
@@ -19,6 +20,7 @@ using (var scope = app.Services.CreateScope())
 {
   var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
   await db.Database.EnsureCreatedAsync();
+  await DbMigrator.EnsureSchemaAsync(db);
   await DbSeeder.SeedAsync(db);
 }
 

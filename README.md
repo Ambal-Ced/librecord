@@ -54,12 +54,14 @@ Instead of hardcoding columns like Title/Author, the Admin defines fields:
 - **Type**: `Text`, `Number`, `Boolean`, `Date`
 - **Required** (optional)
 - **Searchable** (optional)
+- **Filter** (optional): show this field in the filter popup (Text or Boolean fields)
+- **Keywords** (optional, **Text** fields only): store multiple values as comma-separated text (e.g. `Development, Software, Management, Database`). Search and filters treat each part as a separate keyword.
 
-When you add/edit a book, the form is automatically generated from your current custom fields.
+When you add/edit a book, the form is automatically generated from your current custom fields. Keyword fields use a **textarea** so you can paste a comma-separated list.
 
 ### Field limit
 
-By default, you can create up to **6 fields**. Change:
+By default, you can create up to **12 fields**. Change:
 
 - `Admin:MaxCustomFields` in `appsettings.json`
 

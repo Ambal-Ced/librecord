@@ -18,6 +18,7 @@ public sealed class AppDbContext : DbContext
     modelBuilder.Entity<Book>(entity =>
     {
       entity.HasKey(x => x.Id);
+      entity.Property(x => x.BookCount).IsRequired();
       entity.Property(x => x.CreatedAt).IsRequired();
       entity.Property(x => x.UpdatedAt).IsRequired();
     });
@@ -29,6 +30,8 @@ public sealed class AppDbContext : DbContext
       entity.HasIndex(x => x.Name).IsUnique();
       entity.Property(x => x.Type).IsRequired();
       entity.Property(x => x.SortOrder).IsRequired();
+      entity.Property(x => x.IsFilterable).IsRequired();
+      entity.Property(x => x.IsKeywords).IsRequired();
     });
 
     modelBuilder.Entity<BookFieldValue>(entity =>

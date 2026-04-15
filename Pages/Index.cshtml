@@ -7,16 +7,108 @@
 <div class="row row--2">
   <section class="panel">
     <h1 class="h1">Search books</h1>
-    <p class="muted">Search looks at fields marked as searchable in Admin.</p>
+    <p class="muted">Search looks at fields marked as searchable in Admin. Filters come from fields marked as filters.</p>
     <form method="get" class="grid" style="margin-top: 12px;">
       <div class="field">
         <label for="q">Search</label>
         <input id="q" name="q" type="text" value="@Model.Query" placeholder="Try: calculus, author name, keywords…" />
       </div>
+
       <div class="actions">
+        <button class="btn" type="button" data-open-dialog="mainAdvancedDialog">Advance search</button>
+        <button class="btn" type="button" data-open-dialog="mainFiltersDialog">Filters & sort</button>
         <button class="btn btn--primary" type="submit">Search</button>
         <a class="btn" asp-page="/Index">Clear</a>
       </div>
+
+      <dialog id="mainAdvancedDialog" class="dialog">
+        <div class="dialog__panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="font-weight:700;">Advance search</div>
+            <button class="btn" type="button" data-close-dialog>Close</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="field">
+            <label for="ak">Additional keywords (must match)</label>
+            <textarea id="ak" name="ak" rows="3" placeholder="Comma-separated, e.g. calculus, topology, ring theory">@Model.AdvancedKeywords</textarea>
+            <div class="muted" style="font-size: 12px;">
+              These keywords are required to match, and will also improve the related-books suggestions.
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="actions">
+            <button class="btn btn--primary" type="submit" data-close-dialog>Apply</button>
+            <a class="btn" asp-page="/Index">Clear</a>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog id="mainFiltersDialog" class="dialog">
+        <div class="dialog__panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="font-weight:700;">Filters & sort</div>
+            <button class="btn" type="button" data-close-dialog>Close</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="row row--2" style="gap: 12px;">
+            <div class="field">
+              <label>Uploaded from</label>
+              <input type="date" name="uploadedFrom" value="@(Model.UploadedFrom?.ToString("yyyy-MM-dd"))" />
+            </div>
+            <div class="field">
+              <label>Uploaded to</label>
+              <input type="date" name="uploadedTo" value="@(Model.UploadedTo?.ToString("yyyy-MM-dd"))" />
+            </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="field">
+            <label>Sort (single choice)</label>
+            <div class="grid" style="grid-template-columns: 1fr; gap: 8px;">
+              <label class="pill"><input type="radio" name="sort" value="" checked="@(string.IsNullOrWhiteSpace(Model.Sort) ? "checked" : null)" /> Uploaded (newest)</label>
+              <label class="pill"><input type="radio" name="sort" value="uploaded_old" checked="@(Model.Sort == "uploaded_old" ? "checked" : null)" /> Uploaded (oldest)</label>
+              <label class="pill"><input type="radio" name="sort" value="title_az" checked="@(Model.Sort == "title_az" ? "checked" : null)" /> Title (A-Z)</label>
+              <label class="pill"><input type="radio" name="sort" value="title_za" checked="@(Model.Sort == "title_za" ? "checked" : null)" /> Title (Z-A)</label>
+            </div>
+          </div>
+
+          @foreach (var ff in Model.FilterFields)
+          {
+            var key = $"f_{ff.Field.Id}";
+            Model.ActiveFilters.TryGetValue(ff.Field.Id, out var selectedSet);
+
+            <div class="divider"></div>
+            <div class="field">
+              <label>@ff.Field.Name (multi-select)</label>
+              <div class="actions">
+                @foreach (var opt in ff.Options)
+                {
+                  var isChecked = selectedSet is not null && selectedSet.Contains(opt);
+                  <label class="pill">
+                    <input type="checkbox" name="@key" value="@opt" checked="@(isChecked ? "checked" : null)" />
+                    @opt
+                  </label>
+                }
+              </div>
+            </div>
+          }
+
+          <div class="divider"></div>
+
+          <div class="actions">
+            <button class="btn btn--primary" type="submit" data-close-dialog>Apply</button>
+            <a class="btn" asp-page="/Index">Clear</a>
+          </div>
+        </div>
+      </dialog>
+
     </form>
   </section>
 
@@ -35,7 +127,7 @@
       <div class="grid">
         @foreach (var book in Model.Related)
         {
-          <div class="panel" style="padding: 12px;">
+          <div class="panel related-card" style="padding: 12px;" data-open-related>
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
               <div style="font-weight:700;">@book.Title</div>
               <span class="pill">#@book.Id</span>
@@ -49,6 +141,55 @@
                 }
               </div>
             }
+
+            <div class="related-card__details" hidden>
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+                <div style="font-weight:800; font-size: 16px;">@book.Title</div>
+                <div class="actions" style="gap: 6px;">
+                  <span class="pill">#@book.Id</span>
+                  <span class="pill" title="Number of identical copies imported">Count: @book.BookCount</span>
+                </div>
+              </div>
+
+              <div class="divider"></div>
+
+              @if (book.Lines.Count == 0)
+              {
+                <div class="muted">No details.</div>
+              }
+              else
+              {
+                <div class="grid" style="gap: 6px;">
+                  @foreach (var line in book.Lines)
+                  {
+                    <div><span class="muted">@line.Name</span>: @line.Value</div>
+                  }
+                </div>
+              }
+
+              <div class="divider"></div>
+
+              <div>
+                <div class="muted" style="font-size: 12px; margin-bottom: 8px;">Keywords</div>
+                @if (book.Keywords.Count == 0)
+                {
+                  <span class="muted">—</span>
+                }
+                else
+                {
+                  <div class="actions" style="gap: 6px;">
+                    @foreach (var kw in book.Keywords.Take(30))
+                    {
+                      <span class="pill" title="@kw">@kw</span>
+                    }
+                    @if (book.Keywords.Count > 30)
+                    {
+                      <span class="pill" title="More keywords hidden">+@(book.Keywords.Count - 30)</span>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
           </div>
         }
       </div>
@@ -58,8 +199,21 @@
 
 <div class="divider"></div>
 
+<dialog id="relatedDetailsDialog" class="dialog">
+  <div class="dialog__panel">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+      <div style="font-weight:700;">Book details</div>
+      <button class="btn" type="button" data-close-dialog>Close</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div id="relatedDetailsDialogBody" class="muted" style="font-size: 13px;"></div>
+  </div>
+</dialog>
+
 <section class="panel">
-  <h2 class="h1">Results (@Model.Results.Count)</h2>
+  <h2 class="h1">Results</h2>
   @if (Model.Results.Count == 0)
   {
     <p class="muted">No books found.</p>
@@ -72,6 +226,8 @@
           <th style="width: 50px;">ID</th>
           <th>Title</th>
           <th>Details</th>
+          <th style="width: 110px;">BookCount</th>
+          <th style="width: 280px;">Keywords</th>
         </tr>
       </thead>
       <tbody>
@@ -93,10 +249,57 @@
                 }
               }
             </td>
+            <td>
+              <span class="pill">@book.BookCount</span>
+            </td>
+            <td>
+              @if (book.Keywords.Count == 0)
+              {
+                <span class="muted">—</span>
+              }
+              else
+              {
+                <div class="actions" style="gap: 6px;">
+                  @foreach (var kw in book.Keywords.Take(18))
+                  {
+                    <span class="pill" title="@kw">@kw</span>
+                  }
+                  @if (book.Keywords.Count > 18)
+                  {
+                    <span class="pill" title="More keywords hidden">+@(book.Keywords.Count - 18)</span>
+                  }
+                </div>
+              }
+            </td>
           </tr>
         }
       </tbody>
     </table>
   }
+
+  <div class="divider"></div>
+  <div class="pager">
+    @if (Model.PageNumber > 1)
+    {
+      <a class="btn" asp-page="/Index"
+         asp-route-q="@Model.Query"
+         asp-route-ak="@Model.AdvancedKeywords"
+         asp-route-sort="@Model.Sort"
+         asp-route-uploadedFrom="@(Model.UploadedFrom?.ToString("yyyy-MM-dd"))"
+         asp-route-uploadedTo="@(Model.UploadedTo?.ToString("yyyy-MM-dd"))"
+         asp-route-p="@(Model.PageNumber - 1)">Prev</a>
+    }
+    <span class="pager__meta">Page @Model.PageNumber</span>
+    @if (Model.HasMore)
+    {
+      <a class="btn" asp-page="/Index"
+         asp-route-q="@Model.Query"
+         asp-route-ak="@Model.AdvancedKeywords"
+         asp-route-sort="@Model.Sort"
+         asp-route-uploadedFrom="@(Model.UploadedFrom?.ToString("yyyy-MM-dd"))"
+         asp-route-uploadedTo="@(Model.UploadedTo?.ToString("yyyy-MM-dd"))"
+         asp-route-p="@(Model.PageNumber + 1)">Next</a>
+    }
+  </div>
 </section>
 
