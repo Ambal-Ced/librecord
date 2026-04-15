@@ -1,0 +1,22 @@
+# Build outputs
+bin/
+obj/
+
+# Local DB + sqlite journal files
+*.db
+*.db-shm
+*.db-wal
+
+# Local build artifacts folder (used by scripts/builds)
+artifacts/
+
+# User-specific / IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+Desktop.ini
+

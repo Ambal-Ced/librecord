@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("LibRecord")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b4f3a6d3b5b7d3a388764cf94b6488f93350f86f")]
 [assembly: System.Reflection.AssemblyProductAttribute("LibRecord")]
 [assembly: System.Reflection.AssemblyTitleAttribute("LibRecord")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

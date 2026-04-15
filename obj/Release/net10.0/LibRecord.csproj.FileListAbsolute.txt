@@ -134,7 +134,6 @@ D:\New folder (4)\librecord\obj\Release\net10.0\rjimswa.dswa.cache.json
 D:\New folder (4)\librecord\obj\Release\net10.0\rjsmrazor.dswa.cache.json
 D:\New folder (4)\librecord\obj\Release\net10.0\rjsmcshtml.dswa.cache.json
 D:\New folder (4)\librecord\obj\Release\net10.0\scopedcss\bundle\LibRecord.styles.css
-D:\New folder (4)\librecord\obj\Release\net10.0\compressed\wdy1n7zhui-{0}-dap17d9kzj-dap17d9kzj.gz
 D:\New folder (4)\librecord\obj\Release\net10.0\staticwebassets.build.json
 D:\New folder (4)\librecord\obj\Release\net10.0\staticwebassets.build.json.cache
 D:\New folder (4)\librecord\obj\Release\net10.0\staticwebassets.development.json
@@ -146,3 +145,6 @@ D:\New folder (4)\librecord\obj\Release\net10.0\refint\LibRecord.dll
 D:\New folder (4)\librecord\obj\Release\net10.0\LibRecord.pdb
 D:\New folder (4)\librecord\obj\Release\net10.0\LibRecord.genruntimeconfig.cache
 D:\New folder (4)\librecord\obj\Release\net10.0\ref\LibRecord.dll
+D:\New folder (4)\librecord\obj\Release\net10.0\LibRecord.sourcelink.json
+D:\New folder (4)\librecord\obj\Release\net10.0\compressed\wdy1n7zhui-{0}-5h5e886rx4-5h5e886rx4.gz
+D:\New folder (4)\librecord\obj\Release\net10.0\compressed\szj663zwzv-{0}-6ztv2x7pna-6ztv2x7pna.gz
