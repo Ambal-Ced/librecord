@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>@ViewData["Title"] - LibRecord</title>
+  <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="container topbar__inner">
+      <a class="brand" asp-page="/Index">LibRecord</a>
+      <div style="display:flex; align-items:center; gap:12px;">
+        <nav class="nav">
+          <a class="nav__link" asp-page="/Index">Main</a>
+          <a class="nav__link" asp-page="/AdminBooks">Settings</a>
+        </nav>
+        <button class="btn" type="button" data-toggle-theme>Dark mode</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container main">
+    @RenderBody()
+  </main>
+
+  <script src="~/js/site.js" asp-append-version="true"></script>
+</body>
+</html>
+

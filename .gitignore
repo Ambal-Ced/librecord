@@ -1,0 +1,10 @@
+bin/
+obj/
+artifacts/
+
+# User-specific files
+*.user
+*.suo
+
+# Logs
+*.log

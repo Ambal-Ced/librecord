@@ -1,0 +1,112 @@
+@page
+@model LibRecord.Pages.AdminListModel
+@{
+  ViewData["Title"] = "Settings books";
+  ViewData["AdminNav"] = "books";
+}
+
+<section class="panel">
+  <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px;">
+    <div>
+      <h1 class="h1">Settings · Books</h1>
+      <p class="muted">Localhost-only settings panel.</p>
+    </div>
+    @if (Model.IsAdmin)
+    {
+      <form method="post" asp-page-handler="Logout">
+        <button class="btn" type="submit">Logout</button>
+      </form>
+    }
+  </div>
+
+  @if (!string.IsNullOrWhiteSpace(Model.Error))
+  {
+    <div class="divider"></div>
+    <div class="panel" style="border-color: rgba(255,107,107,0.35); background: rgba(255,107,107,0.08);">
+      <strong>Error:</strong> @Model.Error
+    </div>
+  }
+
+  @if (!Model.IsAdmin)
+  {
+    <div class="divider"></div>
+    <form method="post" asp-page-handler="Login" class="grid" style="max-width: 420px;">
+      <div class="field">
+        <label for="pw">Admin password</label>
+        <input id="pw" type="password" asp-for="Password" />
+      </div>
+      <button class="btn btn--primary" type="submit">Enter</button>
+    </form>
+  }
+</section>
+
+@if (Model.IsAdmin)
+{
+  <div class="divider"></div>
+
+  <div class="admin-shell">
+    <aside class="panel" style="padding: 12px;">
+      <div style="font-weight:700; margin-bottom: 10px;">Settings</div>
+      <partial name="Shared/_AdminSidebar" />
+    </aside>
+
+    <section class="panel">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <h2 class="h1" style="margin:0;">Books</h2>
+        <a class="btn btn--primary" asp-page="/AdminBooks">Add book</a>
+      </div>
+
+      <div class="divider"></div>
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width: 50px;">ID</th>
+            <th>Title</th>
+            <th>Details</th>
+            <th style="width: 180px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          @foreach (var book in Model.Books)
+          {
+            <tr>
+              <td><span class="pill">@book.Id</span></td>
+              <td style="font-weight:700;">@book.Title</td>
+              <td class="muted">
+                @foreach (var v in book.Values.Take(6))
+                {
+                  <div><span class="muted">@v.Name</span>: @v.Value</div>
+                }
+              </td>
+              <td>
+                <div class="actions">
+                  <a class="btn" asp-page="/AdminBooks" asp-route-EditBookId="@book.Id">Edit</a>
+                  <form method="post" asp-page-handler="DeleteBook" onsubmit="return confirm('Delete this book?');">
+                    <input type="hidden" name="id" value="@book.Id" />
+                    <button class="btn btn--danger" type="submit">Delete</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+
+      <div class="divider"></div>
+
+      <div class="pager">
+        @if (Model.PageNumber > 1)
+        {
+          <a class="btn" asp-page="/AdminList" asp-route-p="@(Model.PageNumber - 1)">Prev</a>
+        }
+        <span class="pager__meta">Page @Model.PageNumber</span>
+        @if (Model.HasMore)
+        {
+          <a class="btn" asp-page="/AdminList" asp-route-p="@(Model.PageNumber + 1)">Next</a>
+        }
+      </div>
+    </section>
+  </div>
+}
+

@@ -1,0 +1,311 @@
+@page
+@model LibRecord.Pages.AdminFieldsModel
+@{
+  ViewData["Title"] = "Settings fields";
+  ViewData["AdminNav"] = "fields";
+}
+
+<section class="panel">
+  <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px;">
+    <div>
+      <h1 class="h1">Settings · Custom fields</h1>
+      <p class="muted">Localhost-only settings panel.</p>
+    </div>
+    @if (Model.IsAdmin)
+    {
+      <form method="post" asp-page-handler="Logout">
+        <button class="btn" type="submit">Logout</button>
+      </form>
+    }
+  </div>
+
+  @if (!string.IsNullOrWhiteSpace(Model.Error))
+  {
+    <div class="divider"></div>
+    <div class="panel" style="border-color: rgba(255,107,107,0.35); background: rgba(255,107,107,0.08);">
+      <strong>Error:</strong> @Model.Error
+    </div>
+  }
+
+  @if (!Model.IsAdmin)
+  {
+    <div class="divider"></div>
+    <form method="post" asp-page-handler="Login" class="grid" style="max-width: 420px;">
+      <div class="field">
+        <label for="pw">Admin password</label>
+        <input id="pw" type="password" asp-for="Password" />
+      </div>
+      <button class="btn btn--primary" type="submit">Enter</button>
+    </form>
+  }
+</section>
+
+@if (Model.IsAdmin)
+{
+  <div class="divider"></div>
+
+  <div class="admin-shell">
+    <aside class="panel" style="padding: 12px;">
+      <div style="font-weight:700; margin-bottom: 10px;">Settings</div>
+      <partial name="Shared/_AdminSidebar" />
+    </aside>
+
+    <section class="panel">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <h2 class="h1" style="margin:0;">Fields</h2>
+          <div class="muted" style="margin-top:6px;">Create, edit, delete fields. Import/export lives here.</div>
+        </div>
+        <div class="actions">
+          <form method="post" asp-page-handler="Export">
+            <button class="btn" type="submit">Export</button>
+          </form>
+          <button class="btn" type="button" data-open-dialog="importDialog">Import</button>
+        </div>
+      </div>
+
+      <dialog id="importDialog" class="dialog">
+        <div class="dialog__panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="font-weight:700;">Import from Excel</div>
+            <button class="btn" type="button" data-close-dialog>Close</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <form method="post" asp-page-handler="ImportPreview" enctype="multipart/form-data" class="grid">
+            <div class="field">
+              <label>Select .xlsx file</label>
+              <input type="file" name="file" accept=".xlsx" />
+              <div class="muted" style="font-size: 12px;">
+                Column 1 maps to field 1 (e.g. Title), column 2 maps to field 2 (e.g. Author), and so on.
+              </div>
+            </div>
+            <div class="actions">
+              <button class="btn btn--primary" type="submit">Preview import</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+
+      <dialog id="importResultDialog" class="dialog">
+        <div class="dialog__panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="font-weight:700;">Import check</div>
+            <button class="btn" type="button" data-close-dialog>Close</button>
+          </div>
+
+          <div class="divider"></div>
+
+          @if (!string.IsNullOrWhiteSpace(Model.Error))
+          {
+            <div class="panel" style="border-color: rgba(255,107,107,0.35); background: rgba(255,107,107,0.08);">
+              <strong>Error:</strong> @Model.Error
+            </div>
+            <div class="divider"></div>
+          }
+
+          @if (Model.ImportPreview is not null)
+          {
+            <div class="muted" style="font-size: 13px;">Rows detected: <strong>@Model.ImportPreview.TotalRows</strong></div>
+
+            @if (Model.ImportPreview.RequiredMissing.Count > 0)
+            {
+              <div class="divider"></div>
+              <div class="panel" style="border-color: rgba(255,107,107,0.35); background: rgba(255,107,107,0.08);">
+                <strong>Required field missing.</strong>
+                <div class="muted" style="margin-top:6px; font-size: 13px;">
+                  @foreach (var kv in Model.ImportPreview.RequiredMissing)
+                  {
+                    <div>
+                      <strong>@kv.Key</strong>: missing on rows @string.Join(", ", kv.Value.Take(20))@((kv.Value.Count > 20) ? "…" : "")
+                    </div>
+                  }
+                </div>
+                <div class="muted" style="margin-top:8px; font-size: 12px;">
+                  Fix the Excel file or mark the field as not required, then import again.
+                </div>
+              </div>
+            }
+            else if (Model.ImportPreview.OptionalMissing.Count > 0)
+            {
+              <div class="divider"></div>
+              <div class="panel">
+                <strong>Some data is missing.</strong>
+                <div class="muted" style="margin-top:6px; font-size: 13px;">
+                  @foreach (var kv in Model.ImportPreview.OptionalMissing)
+                  {
+                    <div>
+                      <strong>@kv.Key</strong>: empty on rows @string.Join(", ", kv.Value.Take(20))@((kv.Value.Count > 20) ? "…" : "")
+                    </div>
+                  }
+                </div>
+                <div class="divider"></div>
+                <form method="post" asp-page-handler="ImportCommit" class="actions">
+                  <input type="hidden" name="previewId" value="@Model.ImportPreview.PreviewId" />
+                  <input type="hidden" name="force" value="true" />
+                  <button class="btn btn--primary" type="submit">Yes, proceed</button>
+                  <button class="btn" type="button" data-close-dialog>No, cancel</button>
+                </form>
+              </div>
+            }
+            else
+            {
+              <div class="divider"></div>
+              <div class="panel">
+                <strong>All good.</strong> No missing required fields detected.
+                <div class="divider"></div>
+                <form method="post" asp-page-handler="ImportCommit" class="actions">
+                  <input type="hidden" name="previewId" value="@Model.ImportPreview.PreviewId" />
+                  <input type="hidden" name="force" value="true" />
+                  <button class="btn btn--primary" type="submit">Import now</button>
+                  <button class="btn" type="button" data-close-dialog>Cancel</button>
+                </form>
+              </div>
+            }
+          }
+        </div>
+      </dialog>
+
+      <div class="divider"></div>
+
+      <h2 class="h1">Custom fields</h2>
+      <p class="muted">Create up to your configured max (default 6). Mark which fields are searchable.</p>
+
+      <form method="post" asp-page-handler="AddField" class="grid" style="margin-top: 12px;">
+        <div class="field">
+          <label>Field name</label>
+          <input type="text" asp-for="NewFieldName" placeholder="e.g. Title, Author, Volume..." />
+        </div>
+
+        <div class="row row--2" style="gap: 12px;">
+          <div class="field">
+            <label>Type</label>
+            <select asp-for="NewFieldType">
+              <option value="@FieldType.Text">Text</option>
+              <option value="@FieldType.Number">Number</option>
+              <option value="@FieldType.Boolean">Boolean</option>
+              <option value="@FieldType.Date">Date</option>
+            </select>
+          </div>
+          <div class="grid">
+            <label style="margin-bottom: 6px;">Options</label>
+            <div class="actions">
+              <label class="pill"><input type="checkbox" asp-for="NewFieldRequired" /> Required</label>
+              <label class="pill"><input type="checkbox" asp-for="NewFieldSearchable" /> Searchable</label>
+              <label class="pill"><input type="checkbox" asp-for="NewFieldFilterable" /> Filter</label>
+              <label class="pill"><input type="checkbox" asp-for="NewFieldKeywords" /> Keywords</label>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn btn--primary" type="submit">Add field</button>
+      </form>
+
+      <div class="divider"></div>
+
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:50px;">#</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Flags</th>
+            <th style="width: 220px;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          @foreach (var f in Model.Fields.OrderBy(x => x.IsDeleted).ThenBy(x => x.SortOrder))
+          {
+            <tr>
+              <td><span class="pill">@f.SortOrder</span></td>
+              <td>
+                <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                  <span style="font-weight:700;">@f.Name</span>
+                  @if (f.IsDeleted) { <span class="pill">deleted</span> }
+                </div>
+
+                @if (!f.IsDeleted)
+                {
+                  <form method="post" asp-page-handler="RenameField" style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+                    <input type="hidden" name="id" value="@f.Id" />
+                    <input type="text" name="name" value="@f.Name" style="max-width: 260px;" />
+                    <button class="btn" type="submit">Save</button>
+                  </form>
+                }
+              </td>
+              <td class="muted">@f.Type</td>
+              <td class="muted">
+                @if (f.IsRequired) { <span class="pill">required</span> }
+                @if (f.IsSearchable) { <span class="pill">search</span> }
+                @if (f.IsFilterable) { <span class="pill">filter</span> }
+                @if (f.IsKeywords) { <span class="pill" title="Comma-separated values used for keyword search">Kw</span> }
+              </td>
+              <td>
+                <div class="actions">
+                  @if (!f.IsDeleted)
+                  {
+                    <form method="post" asp-page-handler="MoveField">
+                      <input type="hidden" name="id" value="@f.Id" />
+                      <input type="hidden" name="dir" value="up" />
+                      <button class="btn" type="submit">Up</button>
+                    </form>
+                    <form method="post" asp-page-handler="MoveField">
+                      <input type="hidden" name="id" value="@f.Id" />
+                      <input type="hidden" name="dir" value="down" />
+                      <button class="btn" type="submit">Down</button>
+                    </form>
+                    <form method="post" asp-page-handler="ToggleField">
+                      <input type="hidden" name="id" value="@f.Id" />
+                      <input type="hidden" name="prop" value="required" />
+                      <button class="@(f.IsRequired ? "btn btn--primary" : "btn")" type="submit">Req</button>
+                    </form>
+                    <form method="post" asp-page-handler="ToggleField">
+                      <input type="hidden" name="id" value="@f.Id" />
+                      <input type="hidden" name="prop" value="searchable" />
+                      <button class="@(f.IsSearchable ? "btn btn--primary" : "btn")" type="submit">Search</button>
+                    </form>
+                    <form method="post" asp-page-handler="ToggleField">
+                      <input type="hidden" name="id" value="@f.Id" />
+                      <input type="hidden" name="prop" value="filterable" />
+                      <button class="@(f.IsFilterable ? "btn btn--primary" : "btn")" type="submit">Filter</button>
+                    </form>
+                    <form method="post" asp-page-handler="ToggleField">
+                      <input type="hidden" name="id" value="@f.Id" />
+                      <input type="hidden" name="prop" value="keywords" />
+                      <button class="@(f.IsKeywords ? "btn btn--primary" : "btn")" type="submit">Kw</button>
+                    </form>
+                    <form method="post" asp-page-handler="ToggleField">
+                      <input type="hidden" name="id" value="@f.Id" />
+                      <input type="hidden" name="prop" value="delete" />
+                      <button class="btn btn--danger" type="submit">Delete</button>
+                    </form>
+                  }
+                  else
+                  {
+                    <form method="post" asp-page-handler="ToggleField">
+                      <input type="hidden" name="id" value="@f.Id" />
+                      <input type="hidden" name="prop" value="restore" />
+                      <button class="btn" type="submit">Restore</button>
+                    </form>
+                  }
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+  </div>
+}
+
+@if (Model.OpenImportResultDialog)
+{
+  <script>
+    (function () {
+      const d = document.getElementById('importResultDialog');
+      if (d && typeof d.showModal === 'function') d.showModal();
+    })();
+  </script>
+}
+
