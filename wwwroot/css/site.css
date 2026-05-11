@@ -35,8 +35,9 @@ html[data-theme="dark"] {
   --panel-bg-hover: linear-gradient(180deg, rgba(17,27,46,0.92), rgba(17,27,46,0.62));
   --control-bg: rgba(11,18,32,0.7);
   --pager-bg: rgba(11,18,32,0.35);
-  --dialog-backdrop: rgba(0,0,0,0.55);
-  --dialog-bg: linear-gradient(180deg, rgba(17,27,46,0.95), rgba(17,27,46,0.78));
+  /* Make dialogs more readable/obvious in dark mode */
+  --dialog-backdrop: rgba(0,0,0,0.72);
+  --dialog-bg: linear-gradient(180deg, rgba(17,27,46,0.98), rgba(17,27,46,0.90));
   --bg-grad-a: rgba(122, 162, 255, 0.18);
   --bg-grad-b: rgba(255, 107, 107, 0.16);
   --bg-grad-base-top: #08111f;
@@ -115,6 +116,16 @@ a:hover { text-decoration: underline; }
   transform: translateY(-1px);
 }
 .related-card:active { transform: translateY(0); }
+
+/* Main page: Related books column — fixed height, scroll inside */
+.related-books-scroll {
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+  padding-bottom: 2px;
+  -webkit-overflow-scrolling: touch;
+}
 
 .row { display: grid; gap: 14px; }
 .row--2 { grid-template-columns: 1.4fr 1fr; }
@@ -202,6 +213,13 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px
 .btn--danger { background: rgba(220,38,38,0.08); }
 .btn--danger:hover { background: rgba(220,38,38,0.12); }
 .btn--primary { background: rgba(37,99,235,0.16); }
+.btn--primary {
+  border-color: rgba(37,99,235,0.35);
+}
+html[data-theme="dark"] .btn--primary {
+  background: rgba(122, 162, 255, 0.22);
+  border-color: rgba(122, 162, 255, 0.45);
+}
 
 .grid {
   display: grid;
@@ -219,6 +237,17 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px
   vertical-align: top;
 }
 .table th { font-size: 12px; color: var(--muted); font-weight: 600; }
+
+.details-cell {
+  max-height: 160px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.details-cell > div {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
 
 .pill {
   display: inline-flex;
@@ -255,6 +284,35 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px
   font-size: 12px;
 }
 
+.pager__jump-form {
+  margin: 0;
+}
+
+.pager__jump-label {
+  margin: 0;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.pager__jump-input {
+  width: 3.25rem;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--input-bg, var(--panel));
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+}
+
+.pager__of {
+  white-space: nowrap;
+}
+
+.pager__result-count {
+  font-size: 11px;
+}
+
 .dialog {
   border: none;
   padding: 0;
@@ -272,6 +330,47 @@ label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px
   background: var(--dialog-bg);
   border-radius: 14px;
   padding: 16px;
+  color: var(--text);
+  box-shadow: 0 18px 50px rgba(0,0,0,0.25);
+}
+
+.import-processing-dialog {
+  max-width: min(420px, calc(100% - 24px));
+}
+
+.import-processing-dialog__panel {
+  text-align: center;
+}
+
+.import-processing__counts {
+  margin-top: 14px;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.import-processing__pct {
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.import-processing__bar {
+  margin-top: 14px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.import-processing__fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #7aa2ff);
+  transition: width 0.14s ease-out;
 }
 
 @media (max-width: 1024px) {

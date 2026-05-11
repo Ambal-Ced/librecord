@@ -104,7 +104,8 @@ public sealed class AdminListModel : PageModel
         .ToDictionary(v => v.FieldDefinitionId, v => v, EqualityComparer<int>.Default);
 
       string title = $"Book #{book.Id}";
-      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
+      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && f.IsTitle)
+        ?? fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
       if (titleField is not null && byField.TryGetValue(titleField.Id, out var v) && !string.IsNullOrWhiteSpace(v.ValueText))
         title = v.ValueText!;
 

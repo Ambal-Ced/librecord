@@ -1,9 +1,14 @@
 using LibRecord.Data;
 using LibRecord.Models;
 using LibRecord.Services;
+using ClosedXML.Excel;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using System.Globalization;
 
@@ -13,11 +18,15 @@ public sealed class AdminBooksModel : PageModel
 {
   private readonly AppDbContext _db;
   private readonly AdminOptions _options;
+  private readonly IWebHostEnvironment _env;
+  private readonly IMemoryCache _cache;
 
-  public AdminBooksModel(AppDbContext db, IOptions<AdminOptions> options)
+  public AdminBooksModel(AppDbContext db, IOptions<AdminOptions> options, IWebHostEnvironment env, IMemoryCache cache)
   {
     _db = db;
     _options = options.Value;
+    _env = env;
+    _cache = cache;
   }
 
   public bool IsAdmin => AdminAuth.IsAdmin(Request, _options);
@@ -26,6 +35,7 @@ public sealed class AdminBooksModel : PageModel
 
   public List<FieldDefinition> Fields { get; private set; } = [];
   public List<BookRow> Books { get; private set; } = [];
+  public List<ImportBatch> ImportBatches { get; private set; } = [];
 
   [BindProperty] public string Password { get; set; } = "";
 
@@ -40,6 +50,8 @@ public sealed class AdminBooksModel : PageModel
 
   public Dictionary<int, HashSet<string>> ActiveFilters { get; private set; } = [];
   public List<FilterField> FilterFields { get; private set; } = [];
+  public AdminImportPreviewResult? ImportPreview { get; private set; }
+  public bool OpenImportResultDialog { get; private set; }
 
   public async Task OnGetAsync()
   {
@@ -73,6 +85,321 @@ public sealed class AdminBooksModel : PageModel
 
     _db.Books.Remove(book);
     await _db.SaveChangesAsync();
+    return RedirectToPage("/AdminBooks");
+  }
+
+  public async Task<IActionResult> OnPostDeleteAllBooksAsync()
+  {
+    if (!IsAdmin) return RedirectToPage("/AdminBooks");
+    await _db.Database.ExecuteSqlRawAsync("DELETE FROM \"ImportBatchItems\";");
+    await _db.Database.ExecuteSqlRawAsync("DELETE FROM \"ImportBatches\";");
+    await _db.Database.ExecuteSqlRawAsync("DELETE FROM \"BookFieldValues\";");
+    await _db.Database.ExecuteSqlRawAsync("DELETE FROM \"Books\";");
+    return RedirectToPage("/AdminBooks");
+  }
+
+  public async Task<IActionResult> OnPostDeleteImportBatchAsync(string batchId)
+  {
+    if (!IsAdmin) return RedirectToPage("/AdminBooks");
+    if (string.IsNullOrWhiteSpace(batchId)) return RedirectToPage("/AdminBooks");
+
+    var items = await _db.ImportBatchItems
+      .Where(x => x.ImportBatchId == batchId)
+      .ToListAsync();
+
+    if (items.Count == 0)
+    {
+      var b0 = await _db.ImportBatches.FirstOrDefaultAsync(x => x.Id == batchId);
+      if (b0 is not null)
+      {
+        _db.ImportBatches.Remove(b0);
+        await _db.SaveChangesAsync();
+      }
+      return RedirectToPage("/AdminBooks");
+    }
+
+    var bookIds = items.Select(x => x.BookId).Distinct().ToList();
+    var books = await _db.Books
+      .Include(b => b.FieldValues)
+      .Where(b => bookIds.Contains(b.Id))
+      .ToListAsync();
+    var booksById = books.ToDictionary(b => b.Id);
+
+    foreach (var it in items)
+    {
+      if (!booksById.TryGetValue(it.BookId, out var book)) continue;
+      var next = Math.Max(0, book.BookCount - Math.Max(0, it.DeltaCount));
+      book.BookCount = next;
+      book.UpdatedAt = DateTime.UtcNow;
+    }
+
+    // Remove any books that no longer have remaining copies.
+    foreach (var book in books)
+    {
+      if (book.BookCount <= 0)
+        _db.Books.Remove(book);
+    }
+
+    // Delete the batch (cascade will delete items).
+    var batch = await _db.ImportBatches.FirstOrDefaultAsync(x => x.Id == batchId);
+    if (batch is not null)
+      _db.ImportBatches.Remove(batch);
+
+    await _db.SaveChangesAsync();
+    return RedirectToPage("/AdminBooks");
+  }
+
+  public async Task<IActionResult> OnPostExportAsync()
+  {
+    if (!IsAdmin) return RedirectToPage("/AdminBooks");
+
+    var fields = await _db.FieldDefinitions
+      .Where(x => !x.IsDeleted)
+      .OrderBy(x => x.SortOrder)
+      .ToListAsync();
+
+    var books = await _db.Books
+      .Include(b => b.FieldValues)
+      .ThenInclude(v => v.FieldDefinition)
+      .OrderBy(b => b.Id)
+      .ToListAsync();
+
+    using var wb = new XLWorkbook();
+    var ws = wb.Worksheets.Add("Books");
+
+    for (var c = 0; c < fields.Count; c++)
+      ws.Cell(1, c + 1).Value = fields[c].Name;
+
+    for (var r = 0; r < books.Count; r++)
+    {
+      var book = books[r];
+      var byField = book.FieldValues.ToDictionary(v => v.FieldDefinitionId, v => v);
+      for (var c = 0; c < fields.Count; c++)
+      {
+        var f = fields[c];
+        if (!byField.TryGetValue(f.Id, out var v)) continue;
+        ws.Cell(r + 2, c + 1).Value = RenderExportCell(f, v);
+      }
+    }
+
+    ws.Columns().AdjustToContents(1, 80);
+
+    using var ms = new MemoryStream();
+    wb.SaveAs(ms);
+    return File(
+      ms.ToArray(),
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      $"librecord-export-{DateTime.UtcNow:yyyyMMdd-HHmm}.xlsx");
+  }
+
+  public async Task<IActionResult> OnPostImportPreviewAsync(IFormFile? file)
+  {
+    if (!IsAdmin) return RedirectToPage("/AdminBooks");
+    if (file is null || file.Length == 0)
+    {
+      Error = "Choose an Excel file (.xlsx) to import.";
+      await LoadAsync();
+      OpenImportResultDialog = true;
+      return Page();
+    }
+
+    if (!file.FileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+    {
+      Error = "Only .xlsx files are supported.";
+      await LoadAsync();
+      OpenImportResultDialog = true;
+      return Page();
+    }
+
+    var fields = await _db.FieldDefinitions.Where(x => !x.IsDeleted).OrderBy(x => x.SortOrder).ToListAsync();
+    if (fields.Count == 0)
+    {
+      Error = "Create fields first before importing.";
+      await LoadAsync();
+      OpenImportResultDialog = true;
+      return Page();
+    }
+
+    var dataRoot = AppPaths.GetDataRoot(Request.HttpContext.RequestServices.GetRequiredService<IConfiguration>(), _env);
+    var importDir = AppPaths.GetImportsDir(dataRoot);
+    Directory.CreateDirectory(importDir);
+    var previewId = Guid.NewGuid().ToString("n");
+    var path = Path.Combine(importDir, $"{previewId}.xlsx");
+    await using (var fs = System.IO.File.Create(path))
+      await file.CopyToAsync(fs);
+
+    ImportPreview = BuildImportPreview(path, fields);
+    ImportPreview.PreviewId = previewId;
+
+    _cache.Set(
+      $"import:{previewId}",
+      new CachedImport(previewId, path, file.FileName),
+      new MemoryCacheEntryOptions { SlidingExpiration = TimeSpan.FromMinutes(20) });
+
+    await LoadAsync();
+    OpenImportResultDialog = true;
+    return Page();
+  }
+
+  public async Task<IActionResult> OnPostImportCommitAsync(string previewId, bool force)
+  {
+    if (!IsAdmin) return RedirectToPage("/AdminBooks");
+    if (string.IsNullOrWhiteSpace(previewId))
+      return RedirectToPage("/AdminBooks");
+
+    if (!_cache.TryGetValue<CachedImport>($"import:{previewId}", out var cached) || cached is null)
+    {
+      Error = "Import session expired. Please upload the file again.";
+      await LoadAsync();
+      OpenImportResultDialog = true;
+      return Page();
+    }
+
+    var fields = await _db.FieldDefinitions.Where(x => !x.IsDeleted).OrderBy(x => x.SortOrder).ToListAsync();
+    if (fields.Count == 0) return RedirectToPage("/AdminBooks");
+
+    var preview = BuildImportPreview(cached.Path, fields);
+    preview.PreviewId = previewId;
+
+    if (preview.RequiredMissing.Count > 0)
+    {
+      ImportPreview = preview;
+      Error = "Required field missing. Fix your Excel or unrequire the field, then try again.";
+      await LoadAsync();
+      OpenImportResultDialog = true;
+      return Page();
+    }
+
+    if (preview.OptionalMissing.Count > 0 && !force)
+    {
+      ImportPreview = preview;
+      await LoadAsync();
+      OpenImportResultDialog = true;
+      return Page();
+    }
+
+    var rows = ReadImportRows(cached.Path, fields);
+    var now = DateTime.UtcNow;
+
+    var batchId = Guid.NewGuid().ToString("n");
+    var batch = new ImportBatch
+    {
+      Id = batchId,
+      OriginalFileName = cached.OriginalFileName,
+      ImportedAt = now,
+      TotalRows = rows.Count,
+    };
+    _db.ImportBatches.Add(batch);
+    await _db.SaveChangesAsync();
+
+    var deltasByBookId = new Dictionary<int, int>();
+
+    var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && f.IsTitle)
+      ?? fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
+    var authorField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Author", StringComparison.OrdinalIgnoreCase));
+    var volumeField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Volume", StringComparison.OrdinalIgnoreCase));
+
+    string Norm(string? s) => (s ?? "").Trim().ToLowerInvariant();
+    bool CanDedup() => titleField is not null && authorField is not null && volumeField is not null;
+
+    var titleIdx = titleField is null ? -1 : fields.FindIndex(f => f.Id == titleField.Id);
+    var authorIdx = authorField is null ? -1 : fields.FindIndex(f => f.Id == authorField.Id);
+    var volumeIdx = volumeField is null ? -1 : fields.FindIndex(f => f.Id == volumeField.Id);
+
+    var existingByKey = new Dictionary<string, Book>(StringComparer.OrdinalIgnoreCase);
+    if (CanDedup())
+    {
+      var ids = new[] { titleField!.Id, authorField!.Id, volumeField!.Id }.ToHashSet();
+      var existing = await _db.Books
+        .Include(b => b.FieldValues)
+        .Where(b => b.FieldValues.Any(v => ids.Contains(v.FieldDefinitionId)))
+        .ToListAsync();
+
+      foreach (var b in existing)
+      {
+        var byField = b.FieldValues.ToDictionary(v => v.FieldDefinitionId, v => v);
+        var t = byField.TryGetValue(titleField!.Id, out var tv) ? tv.ValueText : "";
+        var a = byField.TryGetValue(authorField!.Id, out var av) ? av.ValueText : "";
+        var v = byField.TryGetValue(volumeField!.Id, out var vv) ? vv.ValueText : "";
+        var key = $"{Norm(t)}|{Norm(a)}|{Norm(v)}";
+        if (!existingByKey.ContainsKey(key))
+          existingByKey[key] = b;
+      }
+    }
+
+    foreach (var row in rows)
+    {
+      if (row.All(IsEffectivelyBlank)) continue;
+
+      Book? book = null;
+      string? keyForRow = null;
+      if (CanDedup())
+      {
+        var t = (titleIdx >= 0 && titleIdx < row.Count) ? row[titleIdx] : "";
+        var a = (authorIdx >= 0 && authorIdx < row.Count) ? row[authorIdx] : "";
+        var v = (volumeIdx >= 0 && volumeIdx < row.Count) ? row[volumeIdx] : "";
+        keyForRow = $"{Norm(t)}|{Norm(a)}|{Norm(v)}";
+        if (existingByKey.TryGetValue(keyForRow, out var existingBook))
+          book = existingBook;
+      }
+
+      if (book is not null)
+      {
+        book.BookCount = Math.Max(1, book.BookCount) + 1;
+        book.UpdatedAt = now;
+
+        if (deltasByBookId.TryGetValue(book.Id, out var cur)) deltasByBookId[book.Id] = cur + 1;
+        else deltasByBookId[book.Id] = 1;
+        continue;
+      }
+
+      book = new Book { UpdatedAt = now, BookCount = 1 };
+      _db.Books.Add(book);
+      await _db.SaveChangesAsync();
+
+      for (var i = 0; i < fields.Count; i++)
+      {
+        var f = fields[i];
+        var raw = (i < row.Count ? row[i] : "") ?? "";
+        if (IsEffectivelyBlank(raw) && f.Type != FieldType.Boolean) continue;
+
+        var fv = new BookFieldValue { BookId = book.Id, FieldDefinitionId = f.Id };
+        ApplyFieldValueFromText(f, raw, fv);
+        _db.BookFieldValues.Add(fv);
+      }
+
+      if (keyForRow is not null)
+        existingByKey[keyForRow] = book;
+
+      if (deltasByBookId.TryGetValue(book.Id, out var curNew)) deltasByBookId[book.Id] = curNew + 1;
+      else deltasByBookId[book.Id] = 1;
+    }
+
+    foreach (var (bookId, delta) in deltasByBookId)
+    {
+      _db.ImportBatchItems.Add(new ImportBatchItem
+      {
+        ImportBatchId = batchId,
+        BookId = bookId,
+        DeltaCount = delta,
+      });
+    }
+
+    await _db.SaveChangesAsync();
+
+    try
+    {
+      var dataRoot = AppPaths.GetDataRoot(Request.HttpContext.RequestServices.GetRequiredService<IConfiguration>(), _env);
+      var resourceDir = AppPaths.GetResourceDir(dataRoot);
+      Directory.CreateDirectory(resourceDir);
+      var dest = Path.Combine(resourceDir, "mbook.xlsx");
+      System.IO.File.Copy(cached.Path, dest, overwrite: true);
+    }
+    catch { /* ignore */ }
+
+    try { System.IO.File.Delete(cached.Path); } catch { /* ignore */ }
+    _cache.Remove($"import:{previewId}");
+
     return RedirectToPage("/AdminBooks");
   }
 
@@ -213,8 +540,15 @@ public sealed class AdminBooksModel : PageModel
     if (!IsAdmin)
     {
       Books = [];
+      ImportBatches = [];
       return;
     }
+
+    ImportBatches = await _db.ImportBatches
+      .AsNoTracking()
+      .OrderByDescending(x => x.ImportedAt)
+      .Take(50)
+      .ToListAsync();
 
     var activeFields = Fields.Where(f => !f.IsDeleted).OrderBy(f => f.SortOrder).ToList();
 
@@ -225,7 +559,7 @@ public sealed class AdminBooksModel : PageModel
       .Include(b => b.FieldValues)
       .ThenInclude(v => v.FieldDefinition)
       .OrderByDescending(b => b.UpdatedAt)
-      .Take(500)
+      .Take(5000)
       .ToListAsync();
 
     books = ApplyUploadedDateFilter(books, UploadedFrom, UploadedTo);
@@ -358,7 +692,8 @@ public sealed class AdminBooksModel : PageModel
       return books.OrderBy(b => b.CreatedAt).ToList();
     if (sort == "title_az" || sort == "title_za")
     {
-      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
+      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && f.IsTitle)
+        ?? fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
       string TitleOf(Book b)
       {
         if (titleField is null) return b.Id.ToString();
@@ -387,7 +722,8 @@ public sealed class AdminBooksModel : PageModel
         .ToDictionary(v => v.FieldDefinitionId, v => v, EqualityComparer<int>.Default);
 
       string title = $"Book #{book.Id}";
-      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
+      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && f.IsTitle)
+        ?? fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
       if (titleField is not null && byField.TryGetValue(titleField.Id, out var v) && !string.IsNullOrWhiteSpace(v.ValueText))
       {
         title = v.ValueText!;
@@ -417,5 +753,142 @@ public sealed class AdminBooksModel : PageModel
       };
     }
   }
+
+  private static string RenderExportCell(FieldDefinition field, BookFieldValue v)
+  {
+    return field.Type switch
+    {
+      FieldType.Text => v.ValueText ?? "",
+      FieldType.Number => v.ValueNumber?.ToString(CultureInfo.InvariantCulture) ?? "",
+      FieldType.Boolean => v.ValueBool is null ? "" : (v.ValueBool.Value ? "true" : "false"),
+      FieldType.Date => v.ValueDate?.ToString("yyyy-MM-dd") ?? "",
+      _ => ""
+    };
+  }
+
+  private static void ApplyFieldValueFromText(FieldDefinition field, string raw, BookFieldValue value)
+  {
+    raw = NormalizeCell(raw);
+    value.ValueText = null;
+    value.ValueNumber = null;
+    value.ValueBool = null;
+    value.ValueDate = null;
+
+    switch (field.Type)
+    {
+      case FieldType.Text:
+        value.ValueText = field.IsKeywords ? KeywordHelper.NormalizeKeywords(raw) : NormalizeTitleCaseIfSafe(field, raw);
+        break;
+      case FieldType.Number:
+        if (decimal.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out var d) ||
+            decimal.TryParse(raw, NumberStyles.Any, CultureInfo.CurrentCulture, out d))
+          value.ValueNumber = d;
+        break;
+      case FieldType.Boolean:
+        value.ValueBool = raw == "1" || raw.Equals("true", StringComparison.OrdinalIgnoreCase) || raw.Equals("yes", StringComparison.OrdinalIgnoreCase) || raw.Equals("on", StringComparison.OrdinalIgnoreCase);
+        break;
+      case FieldType.Date:
+        if (DateTime.TryParse(raw, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out var dt) ||
+            DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out dt))
+          value.ValueDate = dt.Date;
+        break;
+    }
+  }
+
+  private static AdminImportPreviewResult BuildImportPreview(string path, List<FieldDefinition> fields)
+  {
+    var rows = ReadImportRows(path, fields);
+
+    var requiredMissing = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+    var optionalMissing = new Dictionary<string, List<int>>(StringComparer.OrdinalIgnoreCase);
+
+    for (var r = 0; r < rows.Count; r++)
+    {
+      var row = rows[r];
+      if (row.All(IsEffectivelyBlank)) continue;
+
+      for (var c = 0; c < fields.Count; c++)
+      {
+        var f = fields[c];
+        if (f.Type == FieldType.Boolean) continue;
+        var cell = c < row.Count ? row[c] : "";
+        if (!IsEffectivelyBlank(cell)) continue;
+
+        if (f.IsRequired)
+        {
+          if (!requiredMissing.TryGetValue(f.Name, out var list)) requiredMissing[f.Name] = list = [];
+          list.Add(r + 1);
+        }
+        else
+        {
+          if (!optionalMissing.TryGetValue(f.Name, out var list)) optionalMissing[f.Name] = list = [];
+          list.Add(r + 1);
+        }
+      }
+    }
+
+    return new AdminImportPreviewResult
+    {
+      TotalRows = rows.Count,
+      RequiredMissing = requiredMissing,
+      OptionalMissing = optionalMissing,
+    };
+  }
+
+  private static List<List<string>> ReadImportRows(string path, List<FieldDefinition> fields)
+  {
+    using var wb = new XLWorkbook(path);
+    var ws = wb.Worksheets.First();
+
+    var lastRow = ws.LastRowUsed()?.RowNumber() ?? 0;
+    var lastCol = Math.Max(ws.LastColumnUsed()?.ColumnNumber() ?? 0, fields.Count);
+    if (lastRow == 0 || lastCol == 0) return [];
+
+    bool HasHeader()
+    {
+      var headerMatches = 0;
+      for (var c = 1; c <= Math.Min(fields.Count, lastCol); c++)
+      {
+        var s = NormalizeCell(ws.Cell(1, c).GetString());
+        if (string.Equals(s, fields[c - 1].Name, StringComparison.OrdinalIgnoreCase)) headerMatches++;
+      }
+      return headerMatches >= Math.Min(2, fields.Count);
+    }
+
+    var startRow = HasHeader() ? 2 : 1;
+
+    var rows = new List<List<string>>();
+    for (var r = startRow; r <= lastRow; r++)
+    {
+      var row = new List<string>();
+      for (var c = 1; c <= fields.Count; c++)
+        row.Add(NormalizeCell(ws.Cell(r, c).GetString()));
+      rows.Add(row);
+    }
+    return rows;
+  }
+
+  private static string NormalizeCell(string? s)
+  {
+    if (string.IsNullOrEmpty(s)) return "";
+    return s
+      .Replace('\u00A0', ' ')
+      .Replace("\u200B", "")
+      .Replace("\u200C", "")
+      .Replace("\u200D", "")
+      .Trim();
+  }
+
+  private static bool IsEffectivelyBlank(string? s) => string.IsNullOrWhiteSpace(NormalizeCell(s));
+
+  public sealed class AdminImportPreviewResult
+  {
+    public string PreviewId { get; set; } = "";
+    public int TotalRows { get; set; }
+    public Dictionary<string, List<int>> RequiredMissing { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, List<int>> OptionalMissing { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+  }
+
+  private sealed record CachedImport(string PreviewId, string Path, string OriginalFileName);
 }
 

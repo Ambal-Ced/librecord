@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.props" Condition="Exists('$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.props')" />
+
+  <PropertyGroup>
+    <ProjectGuid>c0c6d07a-6ae3-4d8b-b50f-2a8d9d8c8b52</ProjectGuid>
+    <TargetPlatformVersion>10.0.19041.0</TargetPlatformVersion>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <DefaultLanguage>en-US</DefaultLanguage>
+    <EntryPointProjectUniqueName>..\LibRecord.Desktop\LibRecord.Desktop.csproj</EntryPointProjectUniqueName>
+    <PackageCertificateKeyFile></PackageCertificateKeyFile>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AppxManifest Include="Package.appxmanifest" />
+  </ItemGroup>
+
+  <!-- Extra packaged files populated by scripts/build-msix.ps1 -->
+  <ItemGroup>
+    <Content Include="Server\**\*">
+      <Link>Server\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <PackageCopyToOutput>true</PackageCopyToOutput>
+    </Content>
+    <Content Include="WebView2Runtime\**\*">
+      <Link>WebView2Runtime\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <PackageCopyToOutput>true</PackageCopyToOutput>
+    </Content>
+  </ItemGroup>
+
+  <Import Project="$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets" Condition="Exists('$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\Microsoft.DesktopBridge.targets')" />
+</Project>
+

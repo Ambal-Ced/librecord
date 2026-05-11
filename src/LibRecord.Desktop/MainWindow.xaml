@@ -1,0 +1,23 @@
+<Window x:Class="LibRecord.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="LibRecord" Height="900" Width="1280"
+        WindowStartupLocation="CenterScreen">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+    </Grid.RowDefinitions>
+
+    <Border Grid.Row="0" Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" Padding="10">
+      <DockPanel LastChildFill="true">
+        <TextBlock DockPanel.Dock="Left" Text="LibRecord" FontWeight="SemiBold" />
+        <TextBlock DockPanel.Dock="Right" Name="StatusText" Text="Starting..." />
+      </DockPanel>
+    </Border>
+
+    <wv2:WebView2 Grid.Row="1" Name="Browser" />
+  </Grid>
+</Window>
+

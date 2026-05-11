@@ -79,3 +79,66 @@ By default, you can create up to **12 fields**. Change:
 dotnet dev-certs https --trust
 ```
 
+## Windows desktop app (MSIX + WebView2)
+
+This repo also includes a **native Windows desktop wrapper** that runs LibRecord offline (local server + SQLite) and renders the UI inside **WebView2**.
+
+### Where data is stored
+
+When launched via the desktop app/MSIX, LibRecord stores writable data under:
+
+- `%LOCALAPPDATA%\LibRecord\`
+  - `librecord.db`
+  - `imports\` (temporary Excel uploads)
+  - `resource\mbook.xlsx` (latest imported Excel copy)
+
+### Build the MSIX installer
+
+Prereqs (build machine only):
+
+- Windows 10/11
+- Visual Studio 2022 with MSIX/Desktop Bridge tooling (required to build `.wapproj`)
+- .NET SDK 10.x
+
+Steps:
+
+1) Download the **WebView2 Fixed Version Runtime** (x64) and extract it to:
+
+- `src/LibRecord.Package/WebView2Runtime/`
+
+That folder must contain `msedgewebview2.exe`.
+
+2) Build the MSIX (publishes the server self-contained into the package first):
+
+```powershell
+pwsh -File .\scripts\build-msix.ps1
+```
+
+The output MSIX is produced by the packaging project (open it in Visual Studio):
+
+- `src/LibRecord.Package/LibRecord.Package.wapproj`
+
+## Tauri (Option 1: start the ASP.NET server as a sidecar)
+
+This repo also includes a Tauri wrapper that **bundles** the published `LibRecord.exe` and starts it in the background, then loads `http://127.0.0.1:<port>/` in the Tauri window.
+
+### Build (Tauri)
+
+From repo root:
+
+```powershell
+cd .\src\librecord-tauri
+npm install
+
+# Build + copy the LibRecord server EXE into src-tauri/binaries/ (sidecar)
+powershell -NoProfile -ExecutionPolicy Bypass -File ..\..\scripts\prepare-tauri-sidecar.ps1
+
+# Build installer
+npm run build
+```
+
+Outputs:
+
+- NSIS installer: `src/librecord-tauri/src-tauri/target/release/bundle/nsis/LibRecord_0.1.0_x64-setup.exe`
+- MSI installer: `src/librecord-tauri/src-tauri/target/release/bundle/msi/LibRecord_0.1.0_x64_en-US.msi`
+

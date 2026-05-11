@@ -1,0 +1,128 @@
+@page
+@model LibRecord.Pages.ResourceBooksModel
+@{
+  ViewData["Title"] = "Resource books";
+  ViewData["AdminNav"] = "resource";
+}
+
+<section class="panel">
+  <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px;">
+    <div>
+      <h1 class="h1">Settings · Resource Excel</h1>
+      <p class="muted">Reads <code>resource/mbook.xlsx</code> directly (no SQLite import).</p>
+    </div>
+    @if (Model.IsAdmin)
+    {
+      <form method="post" asp-page-handler="Logout">
+        <button class="btn" type="submit">Logout</button>
+      </form>
+    }
+  </div>
+
+  @if (!string.IsNullOrWhiteSpace(Model.Error))
+  {
+    <div class="divider"></div>
+    <div class="panel" style="border-color: rgba(255,107,107,0.35); background: rgba(255,107,107,0.08);">
+      <strong>Error:</strong> @Model.Error
+    </div>
+  }
+
+  @if (!Model.IsAdmin)
+  {
+    <div class="divider"></div>
+    <form method="post" asp-page-handler="Login" class="grid" style="max-width: 420px;">
+      <div class="field">
+        <label for="pw">Admin password</label>
+        <input id="pw" type="password" asp-for="Password" />
+      </div>
+      <button class="btn btn--primary" type="submit">Enter</button>
+    </form>
+  }
+</section>
+
+@if (Model.IsAdmin)
+{
+  <div class="divider"></div>
+
+  <div class="admin-shell">
+    <aside class="panel" style="padding: 12px;">
+      <div style="font-weight:700; margin-bottom: 10px;">Settings</div>
+      <partial name="Shared/_AdminSidebar" />
+    </aside>
+
+    <section class="panel">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <h2 class="h1" style="margin:0;">Excel rows</h2>
+          <div class="muted" style="margin-top:6px;">
+            File: <code>@Model.FilePath</code>
+          </div>
+          <div class="muted" style="margin-top:6px;">
+            Mapping: column 1 → field 1, column 2 → field 2, etc. Empty rows are skipped.
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      @if (Model.Fields.Count == 0)
+      {
+        <div class="muted">No fields configured. Create fields first.</div>
+      }
+      else if (Model.Rows.Count == 0)
+      {
+        <div class="muted">No rows found on this page.</div>
+      }
+      else
+      {
+        <table class="table">
+          <thead>
+            <tr>
+              <th style="width:80px;">Row</th>
+              @foreach (var f in Model.Fields)
+              {
+                <th>@f.Name</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @foreach (var r in Model.Rows)
+            {
+              <tr>
+                <td><span class="pill">@r.RowNumber</span></td>
+                @for (var i = 0; i < Model.Fields.Count; i++)
+                {
+                  <td class="muted">@((i < r.Values.Count) ? r.Values[i] : "")</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      }
+
+      <div class="divider"></div>
+
+      <div class="pager">
+        @if (Model.PageNumber > 1)
+        {
+          <a class="btn" asp-page="/ResourceBooks" asp-route-p="@(Model.PageNumber - 1)">Prev</a>
+        }
+        <span class="pager__meta">
+          Page @Model.PageNumber of @(Model.TotalPages == 0 ? 0 : Model.TotalPages) · Rows @Model.TotalRows
+        </span>
+        @if (Model.HasMore)
+        {
+          <a class="btn" asp-page="/ResourceBooks" asp-route-p="@(Model.PageNumber + 1)">Next</a>
+        }
+        @if (Model.TotalPages > 1)
+        {
+          <form method="get" asp-page="/ResourceBooks" class="actions" style="gap:6px;">
+            <input type="number" name="p" min="1" max="@Model.TotalPages" value="@Model.PageNumber" style="width: 120px;" />
+            <button class="btn" type="submit">Go</button>
+          </form>
+        }
+      </div>
+    </section>
+  </div>
+}
+

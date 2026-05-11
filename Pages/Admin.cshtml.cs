@@ -93,7 +93,9 @@ public sealed class AdminModel : PageModel
       return Page();
     }
 
-    var exists = await _db.FieldDefinitions.AnyAsync(x => !x.IsDeleted && x.Name.ToLower() == name.ToLower());
+    // DB uniqueness is across *all* rows (even if soft-deleted). Treat deleted rows as blocking
+    // until they are purged, otherwise SQLite will throw UNIQUE constraint errors.
+    var exists = await _db.FieldDefinitions.AnyAsync(x => x.Name.ToLower() == name.ToLower());
     if (exists)
     {
       Error = "Field name already exists.";
@@ -110,6 +112,7 @@ public sealed class AdminModel : PageModel
       IsSearchable = NewFieldSearchable,
       IsFilterable = NewFieldFilterable,
       IsKeywords = NewFieldKeywords && NewFieldType == FieldType.Text,
+      IsTitle = false,
       SortOrder = maxSort + 1,
       IsDeleted = false,
     });
@@ -149,12 +152,39 @@ public sealed class AdminModel : PageModel
         }
         field.IsKeywords = !field.IsKeywords;
         break;
+      case "title":
+        if (field.Type != FieldType.Text)
+        {
+          Error = "Title tag is only for Text fields.";
+          await LoadAsync();
+          return Page();
+        }
+        var currentlyTitle = await _db.FieldDefinitions.Where(x => x.IsTitle).ToListAsync();
+        foreach (var f in currentlyTitle)
+          f.IsTitle = false;
+        field.IsTitle = true;
+        break;
       case "delete":
-        field.IsDeleted = true;
-        break;
-      case "restore":
-        field.IsDeleted = false;
-        break;
+        {
+          // Permanent delete: remove dependent values first (FK is Restrict).
+          var values = await _db.BookFieldValues.Where(v => v.FieldDefinitionId == field.Id).ToListAsync();
+          _db.BookFieldValues.RemoveRange(values);
+          _db.FieldDefinitions.Remove(field);
+
+          // Re-normalize sort order for remaining fields.
+          var remaining = await _db.FieldDefinitions.Where(x => !x.IsDeleted).OrderBy(x => x.SortOrder).ToListAsync();
+          for (var i = 0; i < remaining.Count; i++)
+            remaining[i].SortOrder = i + 1;
+          break;
+        }
+      case "purge":
+        {
+          // Back-compat: allow purging previously soft-deleted rows (and their values).
+          var values = await _db.BookFieldValues.Where(v => v.FieldDefinitionId == field.Id).ToListAsync();
+          _db.BookFieldValues.RemoveRange(values);
+          _db.FieldDefinitions.Remove(field);
+          break;
+        }
     }
 
     await _db.SaveChangesAsync();
@@ -194,7 +224,6 @@ public sealed class AdminModel : PageModel
 
     var exists = await _db.FieldDefinitions.AnyAsync(x =>
       x.Id != id &&
-      !x.IsDeleted &&
       x.Name.ToLower() == newName.ToLower());
     if (exists)
     {
@@ -216,6 +245,14 @@ public sealed class AdminModel : PageModel
 
     _db.Books.Remove(book);
     await _db.SaveChangesAsync();
+    return RedirectToPage("/Admin");
+  }
+
+  public async Task<IActionResult> OnPostDeleteAllBooksAsync()
+  {
+    if (!IsAdmin) return RedirectToPage("/Admin");
+    await _db.Database.ExecuteSqlRawAsync("DELETE FROM \"BookFieldValues\";");
+    await _db.Database.ExecuteSqlRawAsync("DELETE FROM \"Books\";");
     return RedirectToPage("/Admin");
   }
 
@@ -369,7 +406,7 @@ public sealed class AdminModel : PageModel
       .Include(b => b.FieldValues)
       .ThenInclude(v => v.FieldDefinition)
       .OrderByDescending(b => b.UpdatedAt)
-      .Take(500)
+      .Take(5000)
       .ToListAsync();
 
     books = ApplyUploadedDateFilter(books, UploadedFrom, UploadedTo);
@@ -502,7 +539,8 @@ public sealed class AdminModel : PageModel
       return books.OrderBy(b => b.CreatedAt).ToList();
     if (sort == "title_az" || sort == "title_za")
     {
-      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
+      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && f.IsTitle)
+        ?? fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
       string TitleOf(Book b)
       {
         if (titleField is null) return b.Id.ToString();
@@ -531,7 +569,8 @@ public sealed class AdminModel : PageModel
         .ToDictionary(v => v.FieldDefinitionId, v => v, EqualityComparer<int>.Default);
 
       string title = $"Book #{book.Id}";
-      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
+      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && f.IsTitle)
+        ?? fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
       if (titleField is not null && byField.TryGetValue(titleField.Id, out var v) && !string.IsNullOrWhiteSpace(v.ValueText))
       {
         title = v.ValueText!;

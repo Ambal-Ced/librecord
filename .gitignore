@@ -2,9 +2,19 @@ bin/
 obj/
 artifacts/
 
+# MSIX build artifacts
+src/LibRecord.Package/Server/
+src/LibRecord.Package/WebView2Runtime/
+
+# Tauri build artifacts
+src/librecord-tauri/src-tauri/binaries/
+
 # User-specific files
 *.user
 *.suo
 
 # Logs
 *.log
+
+.faketarget/
+src/librecord-tauri/src-tauri/target/

@@ -88,7 +88,9 @@ public sealed class AdminFieldsModel : PageModel
       return Page();
     }
 
-    var exists = await _db.FieldDefinitions.AnyAsync(x => !x.IsDeleted && x.Name.ToLower() == name.ToLower());
+    // DB uniqueness is across *all* rows (even if soft-deleted). Treat deleted rows as blocking
+    // until they are purged, otherwise SQLite will throw UNIQUE constraint errors.
+    var exists = await _db.FieldDefinitions.AnyAsync(x => x.Name.ToLower() == name.ToLower());
     if (exists)
     {
       Error = "Field name already exists.";
@@ -105,6 +107,8 @@ public sealed class AdminFieldsModel : PageModel
       IsSearchable = NewFieldSearchable,
       IsFilterable = NewFieldFilterable,
       IsKeywords = NewFieldKeywords && NewFieldType == FieldType.Text,
+      IsTitle = false,
+      IsDetail = false,
       SortOrder = maxSort + 1,
       IsDeleted = false,
     });
@@ -144,12 +148,43 @@ public sealed class AdminFieldsModel : PageModel
         }
         field.IsKeywords = !field.IsKeywords;
         break;
+      case "title":
+        if (field.Type != FieldType.Text)
+        {
+          Error = "Title tag is only for Text fields.";
+          await LoadAsync();
+          return Page();
+        }
+
+        var currentlyTitle = await _db.FieldDefinitions.Where(x => x.IsTitle).ToListAsync();
+        foreach (var f in currentlyTitle)
+          f.IsTitle = false;
+        field.IsTitle = true;
+        break;
+      case "detail":
+        field.IsDetail = !field.IsDetail;
+        break;
       case "delete":
-        field.IsDeleted = true;
-        break;
-      case "restore":
-        field.IsDeleted = false;
-        break;
+        {
+          // Permanent delete: remove dependent values first (FK is Restrict).
+          var values = await _db.BookFieldValues.Where(v => v.FieldDefinitionId == field.Id).ToListAsync();
+          _db.BookFieldValues.RemoveRange(values);
+          _db.FieldDefinitions.Remove(field);
+
+          // Re-normalize sort order for remaining fields.
+          var remaining = await _db.FieldDefinitions.Where(x => !x.IsDeleted).OrderBy(x => x.SortOrder).ToListAsync();
+          for (var i = 0; i < remaining.Count; i++)
+            remaining[i].SortOrder = i + 1;
+          break;
+        }
+      case "purge":
+        {
+          // Back-compat: allow purging previously soft-deleted rows (and their values).
+          var values = await _db.BookFieldValues.Where(v => v.FieldDefinitionId == field.Id).ToListAsync();
+          _db.BookFieldValues.RemoveRange(values);
+          _db.FieldDefinitions.Remove(field);
+          break;
+        }
     }
 
     await _db.SaveChangesAsync();
@@ -189,7 +224,6 @@ public sealed class AdminFieldsModel : PageModel
 
     var exists = await _db.FieldDefinitions.AnyAsync(x =>
       x.Id != id &&
-      !x.IsDeleted &&
       x.Name.ToLower() == newName.ToLower());
     if (exists)
     {
@@ -203,219 +237,7 @@ public sealed class AdminFieldsModel : PageModel
     return RedirectToPage("/AdminFields");
   }
 
-  public async Task<IActionResult> OnPostExportAsync()
-  {
-    if (!IsAdmin) return RedirectToPage("/AdminFields");
-
-    var fields = await _db.FieldDefinitions
-      .Where(x => !x.IsDeleted)
-      .OrderBy(x => x.SortOrder)
-      .ToListAsync();
-
-    var books = await _db.Books
-      .Include(b => b.FieldValues)
-      .ThenInclude(v => v.FieldDefinition)
-      .OrderBy(b => b.Id)
-      .ToListAsync();
-
-    using var wb = new XLWorkbook();
-    var ws = wb.Worksheets.Add("Books");
-
-    for (var c = 0; c < fields.Count; c++)
-      ws.Cell(1, c + 1).Value = fields[c].Name;
-
-    for (var r = 0; r < books.Count; r++)
-    {
-      var book = books[r];
-      var byField = book.FieldValues.ToDictionary(v => v.FieldDefinitionId, v => v);
-      for (var c = 0; c < fields.Count; c++)
-      {
-        var f = fields[c];
-        if (!byField.TryGetValue(f.Id, out var v)) continue;
-        ws.Cell(r + 2, c + 1).Value = RenderExportCell(f, v);
-      }
-    }
-
-    ws.Columns().AdjustToContents(1, 80);
-
-    using var ms = new MemoryStream();
-    wb.SaveAs(ms);
-    return File(
-      ms.ToArray(),
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      $"librecord-export-{DateTime.UtcNow:yyyyMMdd-HHmm}.xlsx");
-  }
-
-  public async Task<IActionResult> OnPostImportPreviewAsync(IFormFile? file)
-  {
-    if (!IsAdmin) return RedirectToPage("/AdminFields");
-    if (file is null || file.Length == 0)
-    {
-      Error = "Choose an Excel file (.xlsx) to import.";
-      await LoadAsync();
-      OpenImportResultDialog = true;
-      return Page();
-    }
-
-    if (!file.FileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
-    {
-      Error = "Only .xlsx files are supported.";
-      await LoadAsync();
-      OpenImportResultDialog = true;
-      return Page();
-    }
-
-    var fields = await _db.FieldDefinitions.Where(x => !x.IsDeleted).OrderBy(x => x.SortOrder).ToListAsync();
-    if (fields.Count == 0)
-    {
-      Error = "Create fields first before importing.";
-      await LoadAsync();
-      OpenImportResultDialog = true;
-      return Page();
-    }
-
-    var importDir = Path.Combine(_env.ContentRootPath, "App_Data", "imports");
-    Directory.CreateDirectory(importDir);
-    var previewId = Guid.NewGuid().ToString("n");
-    var path = Path.Combine(importDir, $"{previewId}.xlsx");
-    await using (var fs = System.IO.File.Create(path))
-      await file.CopyToAsync(fs);
-
-    ImportPreview = BuildImportPreview(path, fields);
-    ImportPreview.PreviewId = previewId;
-
-    _cache.Set(
-      $"import:{previewId}",
-      new CachedImport(previewId, path),
-      new MemoryCacheEntryOptions { SlidingExpiration = TimeSpan.FromMinutes(20) });
-
-    await LoadAsync();
-    OpenImportResultDialog = true;
-    return Page();
-  }
-
-  public async Task<IActionResult> OnPostImportCommitAsync(string previewId, bool force)
-  {
-    if (!IsAdmin) return RedirectToPage("/AdminFields");
-    if (string.IsNullOrWhiteSpace(previewId))
-      return RedirectToPage("/AdminFields");
-
-    if (!_cache.TryGetValue<CachedImport>($"import:{previewId}", out var cached) || cached is null)
-    {
-      Error = "Import session expired. Please upload the file again.";
-      await LoadAsync();
-      OpenImportResultDialog = true;
-      return Page();
-    }
-
-    var fields = await _db.FieldDefinitions.Where(x => !x.IsDeleted).OrderBy(x => x.SortOrder).ToListAsync();
-    if (fields.Count == 0) return RedirectToPage("/AdminFields");
-
-    var preview = BuildImportPreview(cached.Path, fields);
-    preview.PreviewId = previewId;
-
-    if (preview.RequiredMissing.Count > 0)
-    {
-      ImportPreview = preview;
-      Error = "Required field missing. Fix your Excel or unrequire the field, then try again.";
-      await LoadAsync();
-      OpenImportResultDialog = true;
-      return Page();
-    }
-
-    if (preview.OptionalMissing.Count > 0 && !force)
-    {
-      ImportPreview = preview;
-      await LoadAsync();
-      OpenImportResultDialog = true;
-      return Page();
-    }
-
-    var rows = ReadImportRows(cached.Path, fields);
-    var now = DateTime.UtcNow;
-
-    // Deduplicate by (Title, Author, Volume) and increment BookCount.
-    var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
-    var authorField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Author", StringComparison.OrdinalIgnoreCase));
-    var volumeField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Volume", StringComparison.OrdinalIgnoreCase));
-
-    string Norm(string? s) => (s ?? "").Trim().ToLowerInvariant();
-    bool CanDedup() => titleField is not null && authorField is not null && volumeField is not null;
-
-    var titleIdx = titleField is null ? -1 : fields.FindIndex(f => f.Id == titleField.Id);
-    var authorIdx = authorField is null ? -1 : fields.FindIndex(f => f.Id == authorField.Id);
-    var volumeIdx = volumeField is null ? -1 : fields.FindIndex(f => f.Id == volumeField.Id);
-
-    var existingByKey = new Dictionary<string, Book>(StringComparer.OrdinalIgnoreCase);
-    if (CanDedup())
-    {
-      var ids = new[] { titleField!.Id, authorField!.Id, volumeField!.Id }.ToHashSet();
-      var existing = await _db.Books
-        .Include(b => b.FieldValues)
-        .Where(b => b.FieldValues.Any(v => ids.Contains(v.FieldDefinitionId)))
-        .ToListAsync();
-
-      foreach (var b in existing)
-      {
-        var byField = b.FieldValues.ToDictionary(v => v.FieldDefinitionId, v => v);
-        var t = byField.TryGetValue(titleField!.Id, out var tv) ? tv.ValueText : "";
-        var a = byField.TryGetValue(authorField!.Id, out var av) ? av.ValueText : "";
-        var v = byField.TryGetValue(volumeField!.Id, out var vv) ? vv.ValueText : "";
-        var key = $"{Norm(t)}|{Norm(a)}|{Norm(v)}";
-        if (!existingByKey.ContainsKey(key))
-          existingByKey[key] = b;
-      }
-    }
-
-    foreach (var row in rows)
-    {
-      if (row.All(string.IsNullOrWhiteSpace)) continue;
-
-      Book? book = null;
-      string? keyForRow = null;
-      if (CanDedup())
-      {
-        var t = (titleIdx >= 0 && titleIdx < row.Count) ? row[titleIdx] : "";
-        var a = (authorIdx >= 0 && authorIdx < row.Count) ? row[authorIdx] : "";
-        var v = (volumeIdx >= 0 && volumeIdx < row.Count) ? row[volumeIdx] : "";
-        keyForRow = $"{Norm(t)}|{Norm(a)}|{Norm(v)}";
-        if (existingByKey.TryGetValue(keyForRow, out var existingBook))
-          book = existingBook;
-      }
-
-      if (book is not null)
-      {
-        book.BookCount = Math.Max(1, book.BookCount) + 1;
-        book.UpdatedAt = now;
-        continue;
-      }
-
-      book = new Book { UpdatedAt = now, BookCount = 1 };
-      _db.Books.Add(book);
-      await _db.SaveChangesAsync();
-
-      for (var i = 0; i < fields.Count; i++)
-      {
-        var f = fields[i];
-        var raw = (i < row.Count ? row[i] : "")?.Trim() ?? "";
-        if (string.IsNullOrWhiteSpace(raw) && f.Type != FieldType.Boolean) continue;
-
-        var fv = new BookFieldValue { BookId = book.Id, FieldDefinitionId = f.Id };
-        ApplyFieldValueFromText(f, raw, fv);
-        _db.BookFieldValues.Add(fv);
-      }
-
-      if (keyForRow is not null)
-        existingByKey[keyForRow] = book;
-    }
-
-    await _db.SaveChangesAsync();
-
-    try { System.IO.File.Delete(cached.Path); } catch { /* ignore */ }
-    _cache.Remove($"import:{previewId}");
-
-    return RedirectToPage("/AdminFields");
-  }
+  // Import/export moved to /AdminBooks.
 
   private static string RenderExportCell(FieldDefinition field, BookFieldValue v)
   {
@@ -478,14 +300,14 @@ public sealed class AdminFieldsModel : PageModel
     for (var r = 0; r < rows.Count; r++)
     {
       var row = rows[r];
-      if (row.All(string.IsNullOrWhiteSpace)) continue;
+      if (row.All(IsEffectivelyBlank)) continue;
 
       for (var c = 0; c < fields.Count; c++)
       {
         var f = fields[c];
         if (f.Type == FieldType.Boolean) continue;
-        var cell = c < row.Count ? (row[c] ?? "").Trim() : "";
-        if (!string.IsNullOrWhiteSpace(cell)) continue;
+        var cell = c < row.Count ? row[c] : "";
+        if (!IsEffectivelyBlank(cell)) continue;
 
         if (f.IsRequired)
         {
@@ -535,11 +357,25 @@ public sealed class AdminFieldsModel : PageModel
     {
       var row = new List<string>();
       for (var c = 1; c <= fields.Count; c++)
-        row.Add((ws.Cell(r, c).GetString() ?? "").Trim());
+        row.Add(NormalizeCell(ws.Cell(r, c).GetString()));
       rows.Add(row);
     }
     return rows;
   }
+
+  private static string NormalizeCell(string? s)
+  {
+    if (string.IsNullOrEmpty(s)) return "";
+    // Excel sometimes contains "invisible" whitespace (NBSP / zero-width) that looks empty but breaks required checks.
+    return s
+      .Replace('\u00A0', ' ')  // NBSP
+      .Replace("\u200B", "")   // zero-width space
+      .Replace("\u200C", "")   // zero-width non-joiner
+      .Replace("\u200D", "")   // zero-width joiner
+      .Trim();
+  }
+
+  private static bool IsEffectivelyBlank(string? s) => string.IsNullOrWhiteSpace(NormalizeCell(s));
 
   public sealed class AdminImportPreviewResult
   {

@@ -6,6 +6,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!-- Prevent the web project from compiling the desktop/package projects under src/. -->
+  <ItemGroup>
+    <Compile Remove="src\**\*.cs" />
+    <EmbeddedResource Remove="src\**\*" />
+    <None Remove="src\**\*" />
+    <Content Remove="src\**\*" />
+    <Page Remove="src\**\*.xaml" />
+    <ApplicationDefinition Remove="src\**\*.xaml" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.105.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.5" />

@@ -54,6 +54,168 @@
       <h2 class="h1">@((Model.EditBookId is null) ? "Add book" : $"Edit book #{Model.EditBookId}")</h2>
       <p class="muted">This form is generated from your current custom fields.</p>
 
+      <div class="actions" style="margin-top: 10px;">
+        <form method="post" asp-page-handler="Export">
+          <button class="btn" type="submit">Export</button>
+        </form>
+        <button class="btn" type="button" data-open-dialog="importDialog">Import</button>
+        <form method="post" asp-page-handler="DeleteAllBooks" onsubmit="return confirm('Delete ALL books? This cannot be undone.');">
+          <button class="btn btn--danger" type="submit">Delete all books</button>
+        </form>
+      </div>
+
+      <div class="divider"></div>
+      <div class="panel">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+          <div>
+            <div style="font-weight:800;">Imported files</div>
+            <div class="muted" style="font-size: 12px;">Each import adds onto the existing books. You can delete one import batch without deleting everything.</div>
+          </div>
+        </div>
+
+        @if (Model.ImportBatches.Count == 0)
+        {
+          <div class="muted" style="margin-top: 10px;">No imports yet.</div>
+        }
+        else
+        {
+          <div class="divider"></div>
+          <div class="grid" style="gap: 8px;">
+            @foreach (var b in Model.ImportBatches)
+            {
+              <div class="panel" style="padding: 10px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+                <div>
+                  <div style="font-weight:700;">@b.OriginalFileName</div>
+                  <div class="muted" style="font-size: 12px;">
+                    Imported: @b.ImportedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm") · Rows: @b.TotalRows
+                  </div>
+                </div>
+                <form method="post" asp-page-handler="DeleteImportBatch"
+                      onsubmit="return confirm('Delete this imported XLSX from the library? This will subtract its rows from the DB.');">
+                  <input type="hidden" name="batchId" value="@b.Id" />
+                  <button class="btn btn--danger" type="submit">Delete this import</button>
+                </form>
+              </div>
+            }
+          </div>
+        }
+      </div>
+
+      <dialog id="importDialog" class="dialog">
+        <div class="dialog__panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="font-weight:700;">Import from Excel</div>
+            <button class="btn" type="button" data-close-dialog>Close</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <form id="importPreviewForm" method="post" asp-page-handler="ImportPreview" enctype="multipart/form-data" class="grid">
+            <div class="field">
+              <label>Select .xlsx file</label>
+              <input type="file" name="file" accept=".xlsx" />
+              <div class="muted" style="font-size: 12px;">
+                Column 1 maps to field 1, column 2 maps to field 2, and so on.
+              </div>
+              <div class="muted" style="font-size: 12px;">
+                Preview checks the file first. You'll confirm the final <strong>Import now</strong> step in the next dialog.
+              </div>
+            </div>
+            <div class="actions">
+              <button id="importPreviewBtn" class="btn btn--primary" type="submit">Preview import</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+
+      <dialog id="importResultDialog" class="dialog">
+        <div class="dialog__panel">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="font-weight:700;">Import check</div>
+            <button class="btn" type="button" data-close-dialog>Close</button>
+          </div>
+
+          <div class="divider"></div>
+
+          @if (!string.IsNullOrWhiteSpace(Model.Error))
+          {
+            <div class="panel" style="border-color: rgba(255,107,107,0.35); background: rgba(255,107,107,0.08);">
+              <strong>Error:</strong> @Model.Error
+            </div>
+            <div class="divider"></div>
+          }
+
+          @if (Model.ImportPreview is not null)
+          {
+            <div class="muted" style="font-size: 13px;">Rows detected: <strong>@Model.ImportPreview.TotalRows</strong></div>
+
+            @if (Model.ImportPreview.RequiredMissing.Count > 0)
+            {
+              <div class="divider"></div>
+              <div class="panel" style="border-color: rgba(255,107,107,0.35); background: rgba(255,107,107,0.08);">
+                <strong>Required field missing.</strong>
+                <div class="muted" style="margin-top:6px; font-size: 13px;">
+                  @foreach (var kv in Model.ImportPreview.RequiredMissing)
+                  {
+                    <div>
+                      <strong>@kv.Key</strong>: missing on rows @string.Join(", ", kv.Value.Take(20))@((kv.Value.Count > 20) ? "…" : "")
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+            else if (Model.ImportPreview.OptionalMissing.Count > 0)
+            {
+              <div class="divider"></div>
+              <div class="panel">
+                <strong>Some data is missing.</strong>
+                <div class="muted" style="margin-top:6px; font-size: 13px;">
+                  @foreach (var kv in Model.ImportPreview.OptionalMissing)
+                  {
+                    <div>
+                      <strong>@kv.Key</strong>: empty on rows @string.Join(", ", kv.Value.Take(20))@((kv.Value.Count > 20) ? "…" : "")
+                    </div>
+                  }
+                </div>
+                <div class="divider"></div>
+                <form method="post" asp-page-handler="ImportCommit" class="actions import-commit-form" data-total-rows="@Model.ImportPreview.TotalRows">
+                  <input type="hidden" name="previewId" value="@Model.ImportPreview.PreviewId" />
+                  <input type="hidden" name="force" value="true" />
+                  <button class="btn btn--primary" type="submit">Yes, proceed</button>
+                  <button class="btn" type="button" data-close-dialog>No, cancel</button>
+                </form>
+              </div>
+            }
+            else
+            {
+              <div class="divider"></div>
+              <div class="panel">
+                <strong>All good.</strong> No missing required fields detected.
+                <div class="divider"></div>
+                <form method="post" asp-page-handler="ImportCommit" class="actions import-commit-form" data-total-rows="@Model.ImportPreview.TotalRows">
+                  <input type="hidden" name="previewId" value="@Model.ImportPreview.PreviewId" />
+                  <input type="hidden" name="force" value="true" />
+                  <button class="btn btn--primary" type="submit">Import now</button>
+                  <button class="btn" type="button" data-close-dialog>Cancel</button>
+                </form>
+              </div>
+            }
+          }
+        </div>
+      </dialog>
+
+      <dialog id="importProcessingDialog" class="dialog import-processing-dialog" aria-labelledby="importProcessingTitle" aria-busy="true">
+        <div class="dialog__panel import-processing-dialog__panel">
+          <div style="font-weight:800;" id="importProcessingTitle">Processing…</div>
+          <p class="muted" style="margin: 8px 0 0; font-size: 13px;">Importing rows into the database. Please keep this tab open.</p>
+          <div class="import-processing__counts" id="importProcessingCounts" aria-live="polite">0 / 0</div>
+          <div class="import-processing__pct" id="importProcessingPct" aria-live="polite">0%</div>
+          <div class="import-processing__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="importProcessingBar">
+            <div class="import-processing__fill" id="importProcessingFill"></div>
+          </div>
+        </div>
+      </dialog>
+
       <form method="post" asp-page-handler="SaveBook" class="grid" style="margin-top: 12px;">
         <input type="hidden" name="id" value="@(Model.EditBookId ?? 0)" />
 
@@ -102,5 +264,17 @@
       </form>
     </section>
   </div>
+}
+
+@if (Model.OpenImportResultDialog)
+{
+  <script>
+    (function () {
+      const importD = document.getElementById('importDialog');
+      try { if (importD && typeof importD.close === 'function') importD.close(); } catch (_) {}
+      const d = document.getElementById('importResultDialog');
+      if (d && typeof d.showModal === 'function') d.showModal();
+    })();
+  </script>
 }
 

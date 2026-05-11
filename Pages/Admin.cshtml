@@ -112,6 +112,7 @@
               </td>
               <td class="muted">@f.Type</td>
               <td class="muted">
+                @if (f.IsTitle) { <span class="pill">title</span> }
                 @if (f.IsRequired) { <span class="pill">required</span> }
                 @if (f.IsSearchable) { <span class="pill">search</span> }
                 @if (f.IsFilterable) { <span class="pill">filter</span> }
@@ -153,6 +154,11 @@
                     </form>
                     <form method="post" asp-page-handler="ToggleField">
                       <input type="hidden" name="id" value="@f.Id" />
+                      <input type="hidden" name="prop" value="title" />
+                      <button class="@(f.IsTitle ? "btn btn--primary" : "btn")" type="submit">Title</button>
+                    </form>
+                    <form method="post" asp-page-handler="ToggleField">
+                      <input type="hidden" name="id" value="@f.Id" />
                       <input type="hidden" name="prop" value="delete" />
                       <button class="btn btn--danger" type="submit">Delete</button>
                     </form>
@@ -161,8 +167,8 @@
                   {
                     <form method="post" asp-page-handler="ToggleField">
                       <input type="hidden" name="id" value="@f.Id" />
-                      <input type="hidden" name="prop" value="restore" />
-                      <button class="btn" type="submit">Restore</button>
+                      <input type="hidden" name="prop" value="purge" />
+                      <button class="btn btn--danger" type="submit">Purge</button>
                     </form>
                   }
                 </div>
@@ -221,6 +227,9 @@
         <div class="actions">
           <button class="btn btn--primary" type="submit">Save</button>
           <a class="btn" asp-page="/Admin">Reset</a>
+          <form method="post" asp-page-handler="DeleteAllBooks" onsubmit="return confirm('Delete ALL books? This cannot be undone.');">
+            <button class="btn btn--danger" type="submit">Delete all books</button>
+          </form>
         </div>
       </form>
     </section>

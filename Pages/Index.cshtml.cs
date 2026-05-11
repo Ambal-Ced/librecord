@@ -1,8 +1,13 @@
 using LibRecord.Data;
 using LibRecord.Models;
 using LibRecord.Services;
+using ClosedXML.Excel;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using System.Globalization;
 using System.Text;
 
@@ -11,10 +16,12 @@ namespace LibRecord.Pages;
 public sealed class IndexModel : PageModel
 {
   private readonly AppDbContext _db;
+  private readonly IWebHostEnvironment _env;
 
-  public IndexModel(AppDbContext db)
+  public IndexModel(AppDbContext db, IWebHostEnvironment env)
   {
     _db = db;
+    _env = env;
   }
 
   public string Query { get; private set; } = "";
@@ -31,8 +38,36 @@ public sealed class IndexModel : PageModel
   public List<BookCard> Results { get; private set; } = [];
   public List<BookCard> Related { get; private set; } = [];
 
+  public int DbBookCount { get; private set; }
+  public int? ResourceRowCount { get; private set; }
+
   public int PageNumber { get; private set; } = 1;
   public bool HasMore { get; private set; }
+  /// <summary>Total matching rows for current filters (browse or search).</summary>
+  public int TotalResultsCount { get; private set; }
+  /// <summary>Total pages for current result set (page size 5).</summary>
+  public int TotalPages { get; private set; }
+  public int FoundAndRelatedCount { get; private set; }
+  public bool HasAnySearch { get; private set; }
+
+  /// <summary>Query string (starts with ?) preserving filters/search/sort for pagination links.</summary>
+  public string BuildPagerQuery(int page)
+  {
+    var qb = new QueryBuilder();
+    if (!string.IsNullOrWhiteSpace(Query)) qb.Add("q", Query);
+    if (!string.IsNullOrWhiteSpace(AdvancedKeywords)) qb.Add("ak", AdvancedKeywords);
+    if (!string.IsNullOrWhiteSpace(Sort)) qb.Add("sort", Sort);
+    if (UploadedFrom is not null) qb.Add("uploadedFrom", UploadedFrom.Value.ToString("yyyy-MM-dd"));
+    if (UploadedTo is not null) qb.Add("uploadedTo", UploadedTo.Value.ToString("yyyy-MM-dd"));
+    qb.Add("p", page.ToString());
+    foreach (var (fieldId, set) in ActiveFilters)
+    {
+      foreach (var v in set)
+        qb.Add($"f_{fieldId}", v);
+    }
+
+    return qb.ToQueryString().Value ?? "";
+  }
 
   public async Task OnGetAsync(string? q, string? ak, int? p, string? sort, DateOnly? uploadedFrom, DateOnly? uploadedTo)
   {
@@ -51,25 +86,36 @@ public sealed class IndexModel : PageModel
     ActiveFilters = ReadFieldFilters(Fields.Where(f => f.IsFilterable));
     FilterFields = await BuildFilterFieldsAsync(Fields.Where(f => f.IsFilterable).ToList());
 
+    DbBookCount = await _db.Books.CountAsync();
+    ResourceRowCount = TryCountResourceRows();
+
     var books = await _db.Books
       .Include(b => b.FieldValues)
       .ThenInclude(v => v.FieldDefinition)
       .OrderByDescending(b => b.UpdatedAt)
-      .Take(500)
       .ToListAsync();
 
     books = ApplyUploadedDateFilter(books, UploadedFrom, UploadedTo);
     books = ApplyFieldFilters(books, ActiveFilters, Fields);
     books = ApplySort(books, Fields, Sort);
 
-    var hasAnySearch = !string.IsNullOrWhiteSpace(Query) || !string.IsNullOrWhiteSpace(AdvancedKeywords);
-    if (!hasAnySearch)
+    const int pageSize = 5;
+
+    HasAnySearch = !string.IsNullOrWhiteSpace(Query) || !string.IsNullOrWhiteSpace(AdvancedKeywords);
+    if (!HasAnySearch)
     {
-      const int pageSize = 5;
+      TotalResultsCount = books.Count;
+      TotalPages = TotalResultsCount == 0 ? 0 : (int)Math.Ceiling(TotalResultsCount / (double)pageSize);
+      if (TotalPages > 0)
+        PageNumber = Math.Clamp(PageNumber, 1, TotalPages);
+      else
+        PageNumber = 1;
+
       var skip = (PageNumber - 1) * pageSize;
-      HasMore = books.Count > (skip + pageSize);
+      HasMore = TotalPages > 0 && PageNumber < TotalPages;
       Results = books.Skip(skip).Take(pageSize).Select(b => BookCardMapper.From(b, Fields)).ToList();
       Related = [];
+      FoundAndRelatedCount = 0;
       return;
     }
 
@@ -132,17 +178,23 @@ public sealed class IndexModel : PageModel
       if (score > 0) scored.Add((book, score));
     }
 
-    const int searchPageSize = 5;
     var ordered = scored
       .OrderByDescending(x => x.Score)
       .ThenByDescending(x => x.Book.UpdatedAt)
       .ToList();
 
-    var skipSearch = (PageNumber - 1) * searchPageSize;
-    HasMore = ordered.Count > (skipSearch + searchPageSize);
+    TotalResultsCount = ordered.Count;
+    TotalPages = TotalResultsCount == 0 ? 0 : (int)Math.Ceiling(TotalResultsCount / (double)pageSize);
+    if (TotalPages > 0)
+      PageNumber = Math.Clamp(PageNumber, 1, TotalPages);
+    else
+      PageNumber = 1;
+
+    var skipSearch = (PageNumber - 1) * pageSize;
+    HasMore = TotalPages > 0 && PageNumber < TotalPages;
     Results = ordered
       .Skip(skipSearch)
-      .Take(searchPageSize)
+      .Take(pageSize)
       .Select(x => BookCardMapper.From(x.Book, Fields))
       .ToList();
 
@@ -156,6 +208,68 @@ public sealed class IndexModel : PageModel
     Related = ComputeRelated(top, books, Fields, queryTokens, requiredTokens)
       .Select(b => BookCardMapper.From(b, Fields))
       .ToList();
+
+    var ids = new HashSet<int>();
+    foreach (var x in ordered) ids.Add(x.Book.Id);
+    foreach (var r in Related) ids.Add(r.Id);
+    FoundAndRelatedCount = ids.Count;
+  }
+
+  private int? TryCountResourceRows()
+  {
+    try
+    {
+      var dataRoot = AppPaths.GetDataRoot(Request.HttpContext.RequestServices.GetRequiredService<IConfiguration>(), _env);
+      var path = Path.Combine(AppPaths.GetResourceDir(dataRoot), "mbook.xlsx");
+      if (!System.IO.File.Exists(path)) return null;
+
+      using var wb = new XLWorkbook(path);
+      var ws = wb.Worksheets.First();
+
+      var lastRow = ws.LastRowUsed()?.RowNumber() ?? 0;
+      var lastCol = ws.LastColumnUsed()?.ColumnNumber() ?? 0;
+      if (lastRow <= 0 || lastCol <= 0) return 0;
+
+      bool IsEffectivelyBlank(string? s)
+      {
+        if (string.IsNullOrEmpty(s)) return true;
+        var norm = s
+          .Replace('\u00A0', ' ')
+          .Replace("\u200B", "")
+          .Replace("\u200C", "")
+          .Replace("\u200D", "")
+          .Trim();
+        return string.IsNullOrWhiteSpace(norm);
+      }
+
+      // Treat row 1 as header if it matches at least 2 configured fields.
+      var headerMatches = 0;
+      var max = Math.Min(Fields.Count, lastCol);
+      for (var c = 1; c <= max; c++)
+      {
+        var s = (ws.Cell(1, c).GetString() ?? "").Trim();
+        if (Fields.Count > 0 && string.Equals(s, Fields[c - 1].Name, StringComparison.OrdinalIgnoreCase))
+          headerMatches++;
+      }
+      var startRow = headerMatches >= Math.Min(2, max) ? 2 : 1;
+
+      var count = 0;
+      for (var r = startRow; r <= lastRow; r++)
+      {
+        var allBlank = true;
+        for (var c = 1; c <= max; c++)
+        {
+          var s = ws.Cell(r, c).GetString();
+          if (!IsEffectivelyBlank(s)) { allBlank = false; break; }
+        }
+        if (!allBlank) count++;
+      }
+      return count;
+    }
+    catch
+    {
+      return null;
+    }
   }
 
   private static string SearchableFieldText(FieldDefinition fd, BookFieldValue v)
@@ -260,7 +374,8 @@ public sealed class IndexModel : PageModel
       return books.OrderBy(b => b.CreatedAt).ToList();
     if (sort == "title_az" || sort == "title_za")
     {
-      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
+      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && f.IsTitle)
+        ?? fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
       string TitleOf(Book b)
       {
         if (titleField is null) return b.Id.ToString();
@@ -480,7 +595,8 @@ public sealed class IndexModel : PageModel
         .ToDictionary(v => v.FieldDefinitionId, v => v, EqualityComparer<int>.Default);
 
       string? title = null;
-      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
+      var titleField = fields.FirstOrDefault(f => f.Type == FieldType.Text && f.IsTitle)
+        ?? fields.FirstOrDefault(f => f.Type == FieldType.Text && string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase));
       if (titleField is not null && byField.TryGetValue(titleField.Id, out var tv)) title = tv.ValueText;
 
       title ??= book.Id.ToString();
@@ -492,16 +608,23 @@ public sealed class IndexModel : PageModel
         keywords = KeywordHelper.SplitKeywords(kv.ValueText).ToList();
       }
 
+      var anyDetailSelected = fields.Any(f =>
+        !f.IsDeleted &&
+        f.IsDetail &&
+        !f.IsKeywords &&
+        !(f.IsTitle || string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase)));
+      var maxLines = anyDetailSelected ? 50 : 4;
       var lines = new List<(string Name, string Value)>();
       foreach (var f in fields.Where(f => !f.IsDeleted).OrderBy(f => f.SortOrder))
       {
+        if (anyDetailSelected && !f.IsDetail) continue;
         if (!byField.TryGetValue(f.Id, out var v)) continue;
         var rendered = RenderValue(f, v);
         if (string.IsNullOrWhiteSpace(rendered)) continue;
-        if (string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase)) continue;
+        if (f.IsTitle || string.Equals(f.Name, "Title", StringComparison.OrdinalIgnoreCase)) continue;
         if (f.IsKeywords) continue; // rendered separately as keyword pills
         lines.Add((f.Name, rendered));
-        if (lines.Count >= 4) break;
+        if (lines.Count >= maxLines) break;
       }
 
       return new IndexModel.BookCard(book.Id, title, book.BookCount, lines, keywords);
